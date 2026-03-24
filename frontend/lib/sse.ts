@@ -5,7 +5,7 @@
 
 const QUERY_API_URL =
   process.env.NEXT_PUBLIC_QUERY_API_URL ??
-  "https://rag-query-api-42xnxsuadq-uc.a.run.app/query";
+  "https://rag-query-api-204300710565.us-central1.run.app/query";
 
 export interface QueryMetadata {
   query_id: string;
