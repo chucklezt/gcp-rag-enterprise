@@ -18,11 +18,11 @@ on Google Cloud Platform, aligned to the GCP Well-Architected Framework.
 ## GCP Configuration
 
 ```
-Project ID:     [SET YOUR GCP PROJECT ID HERE]
+Project ID:     rag-demo-491202
 Region:         us-central1
 Zone:           us-central1-a
-Bucket name:    [PROJECT_ID]-rag-documents
-AR repo:        us-central1-docker.pkg.dev/[PROJECT_ID]/rag-docker
+Bucket name:    rag-demo-491202-rag-documents
+AR repo:        us-central1-docker.pkg.dev/rag-demo-491202/rag-docker
 ```
 
 Always use `us-central1` unless there is a specific reason to deviate.

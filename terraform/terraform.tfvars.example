@@ -1,0 +1,6 @@
+project_id         = "YOUR_GCP_PROJECT_ID"
+region             = "us-central1"
+zone               = "us-central1-a"
+environment        = "dev"
+vpc_cidr           = "10.10.0.0/24"
+vpc_connector_cidr = "10.10.1.0/28"
