@@ -14,6 +14,34 @@ resource "google_service_account" "query_api_sa" {
   project      = var.project_id
 }
 
+# ── Cloud Build service account ──────────────────────────────────────────────
+
+resource "google_service_account" "cloudbuild_sa" {
+  account_id   = "cloudbuild-sa"
+  display_name = "Cloud Build Service Account"
+  description  = "Dedicated identity for Cloud Build CI/CD pipeline"
+  project      = var.project_id
+}
+
+locals {
+  cloudbuild_project_roles = [
+    "roles/cloudbuild.builds.builder",
+    "roles/run.developer",
+    "roles/iam.serviceAccountUser",
+    "roles/artifactregistry.writer",
+    "roles/logging.logWriter",
+    "roles/storage.objectAdmin",
+  ]
+}
+
+resource "google_project_iam_member" "cloudbuild_sa_project_roles" {
+  for_each = toset(local.cloudbuild_project_roles)
+
+  project = var.project_id
+  role    = each.value
+  member  = google_service_account.cloudbuild_sa.member
+}
+
 # ── chunker-sa: project-level roles ──────────────────────────────────────────
 
 locals {

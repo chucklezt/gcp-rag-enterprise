@@ -18,6 +18,11 @@ output "query_api_sa_member" {
   value       = google_service_account.query_api_sa.member
 }
 
+output "cloudbuild_sa_email" {
+  description = "Email of the cloudbuild-sa service account"
+  value       = google_service_account.cloudbuild_sa.email
+}
+
 output "artifact_registry_repository_id" {
   description = "Full resource ID of the rag-docker Artifact Registry repository"
   value       = google_artifact_registry_repository.rag_docker.id

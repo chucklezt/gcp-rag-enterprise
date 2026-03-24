@@ -43,6 +43,11 @@ output "query_api_sa_email" {
   value       = module.security.query_api_sa_email
 }
 
+output "cloudbuild_sa_email" {
+  description = "Email of the cloudbuild-sa service account"
+  value       = module.security.cloudbuild_sa_email
+}
+
 output "artifact_registry_repository_url" {
   description = "Docker push/pull URL for the rag-docker Artifact Registry repository"
   value       = module.security.artifact_registry_repository_url
