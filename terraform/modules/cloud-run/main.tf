@@ -88,7 +88,7 @@ resource "google_cloud_run_v2_service" "rag_query_api" {
   location = var.region
   project  = var.project_id
 
-  ingress = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = var.query_api_sa_email
@@ -156,6 +156,16 @@ resource "google_cloud_run_v2_service" "rag_query_api" {
 # Tightens the project-level run.invoker binding (from the security module)
 # down to just the rag-chunker service. The Pub/Sub service agent signs
 # OIDC tokens for push delivery.
+
+# TODO: Replace allUsers with IAP-based auth before any production use.
+# Temporary dev/demo exception — allows unauthenticated access to the query API.
+resource "google_cloud_run_v2_service_iam_member" "query_api_public_invoker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.rag_query_api.name
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
 
 resource "google_cloud_run_v2_service_iam_member" "pubsub_sa_invoke_chunker" {
   project  = var.project_id
