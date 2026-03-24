@@ -275,3 +275,4 @@ Technology Executive · AI Strategist · Cloud Transformation Leader
 - LinkedIn: [linkedin.com/in/chucktsocanos](https://linkedin.com/in/chucktsocanos)
 
 *Design prompted by Chuck Tsocanos using Claude.*
+# Enterprise RAG on GCP
