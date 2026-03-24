@@ -25,7 +25,7 @@ CHUNK_SIZE = 500       # tokens
 CHUNK_OVERLAP = 50     # tokens
 EMBEDDING_MODEL = "text-embedding-004"
 EMBEDDING_DIMENSIONS = 768
-EMBEDDING_BATCH_SIZE = 250  # API limit per request
+EMBEDDING_BATCH_SIZE = 5  # Stay within text-embedding-004's 20,000 token limit per request
 
 
 def process_document(
