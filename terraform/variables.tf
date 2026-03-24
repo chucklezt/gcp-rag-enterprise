@@ -63,3 +63,13 @@ variable "vpc_connector_cidr" {
   type        = string
   default     = "10.10.1.0/28"
 }
+
+variable "chunker_image" {
+  description = "Full Artifact Registry image URL for rag-chunker (e.g. us-central1-docker.pkg.dev/PROJECT/rag-docker/rag-chunker:v1)"
+  type        = string
+}
+
+variable "query_api_image" {
+  description = "Full Artifact Registry image URL for rag-query-api (e.g. us-central1-docker.pkg.dev/PROJECT/rag-docker/rag-query-api:v1)"
+  type        = string
+}

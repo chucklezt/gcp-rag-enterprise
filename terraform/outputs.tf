@@ -48,6 +48,16 @@ output "artifact_registry_repository_url" {
   value       = module.security.artifact_registry_repository_url
 }
 
+output "chunker_service_url" {
+  description = "HTTPS URL of the rag-chunker Cloud Run service"
+  value       = module.cloud_run.chunker_service_url
+}
+
+output "query_api_service_url" {
+  description = "HTTPS URL of the rag-query-api Cloud Run service"
+  value       = module.cloud_run.query_api_service_url
+}
+
 output "vector_search_index_id" {
   description = "ID of the Vertex AI Vector Search index"
   value       = module.vector_search.index_id
