@@ -47,3 +47,23 @@ output "artifact_registry_repository_url" {
   description = "Docker push/pull URL for the rag-docker Artifact Registry repository"
   value       = module.security.artifact_registry_repository_url
 }
+
+output "vector_search_index_id" {
+  description = "ID of the Vertex AI Vector Search index"
+  value       = module.vector_search.index_id
+}
+
+output "vector_search_index_name" {
+  description = "Resource name of the Vertex AI Vector Search index"
+  value       = module.vector_search.index_name
+}
+
+output "vector_search_endpoint_id" {
+  description = "ID of the Vertex AI Vector Search index endpoint"
+  value       = module.vector_search.index_endpoint_id
+}
+
+output "vector_search_endpoint_name" {
+  description = "Resource name of the Vertex AI Vector Search index endpoint"
+  value       = module.vector_search.index_endpoint_name
+}

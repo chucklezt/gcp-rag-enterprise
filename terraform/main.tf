@@ -42,3 +42,13 @@ module "networking" {
   vpc_connector_cidr = var.vpc_connector_cidr
   labels             = local.common_labels
 }
+
+module "vector_search" {
+  source = "./modules/vector-search"
+
+  project_id     = var.project_id
+  project_number = var.project_number
+  region         = var.region
+  environment    = var.environment
+  labels         = local.common_labels
+}

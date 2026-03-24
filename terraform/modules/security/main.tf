@@ -187,7 +187,7 @@ resource "google_billing_budget" "rag_budget" {
   display_name    = "enterprise-rag-gcp-${var.environment}"
 
   budget_filter {
-    projects = ["projects/${var.project_number}"]
+    projects               = ["projects/${var.project_number}"]
     credit_types_treatment = "EXCLUDE_ALL_CREDITS"
   }
 
