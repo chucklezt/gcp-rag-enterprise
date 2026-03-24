@@ -87,6 +87,8 @@ async def handle_pubsub(request: Request) -> Response:
         "text/csv",
         "application/json",
         "application/epub+zip",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     }
     if content_type not in supported_types:
         log.info("skipping_unsupported_content_type")
