@@ -1,0 +1,25 @@
+steps:
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--build-arg"
+      - "NEXT_PUBLIC_QUERY_API_URL=${_QUERY_API_URL}"
+      - "-t"
+      - "${_IMAGE_TAG}"
+      - "."
+
+  - name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "${_IMAGE_TAG}"
+
+images:
+  - "${_IMAGE_TAG}"
+
+substitutions:
+  _QUERY_API_URL: "https://rag-query-api-42xnxsuadq-uc.a.run.app/query"
+  # TODO: Replace hardcoded project ID with $PROJECT_ID once Cloud Build trigger is configured
+  _IMAGE_TAG: "us-central1-docker.pkg.dev/rag-demo-491202/rag-docker/rag-frontend:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
