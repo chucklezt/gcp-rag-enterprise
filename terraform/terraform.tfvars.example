@@ -1,7 +1,12 @@
 project_id         = "YOUR_GCP_PROJECT_ID"
+project_number     = "YOUR_GCP_PROJECT_NUMBER"
 region             = "us-central1"
 zone               = "us-central1-a"
 environment        = "dev"
+
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX"
+budget_alert_email = "you@example.com"
+
 vpc_cidr           = "10.10.0.0/24"
 vpc_connector_cidr = "10.10.1.0/28"
 

@@ -32,3 +32,18 @@ output "pubsub_subscription_id" {
   description = "ID of the rag-ingest-push Pub/Sub subscription"
   value       = module.storage.pubsub_subscription_id
 }
+
+output "chunker_sa_email" {
+  description = "Email of the chunker-sa service account"
+  value       = module.security.chunker_sa_email
+}
+
+output "query_api_sa_email" {
+  description = "Email of the query-api-sa service account"
+  value       = module.security.query_api_sa_email
+}
+
+output "artifact_registry_repository_url" {
+  description = "Docker push/pull URL for the rag-docker Artifact Registry repository"
+  value       = module.security.artifact_registry_repository_url
+}

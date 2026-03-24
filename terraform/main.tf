@@ -6,6 +6,21 @@ locals {
   }
 }
 
+module "security" {
+  source = "./modules/security"
+
+  project_id             = var.project_id
+  project_number         = var.project_number
+  region                 = var.region
+  environment            = var.environment
+  labels                 = local.common_labels
+  billing_account_id     = var.billing_account_id
+  budget_alert_email     = var.budget_alert_email
+  bucket_name            = module.storage.bucket_name
+  pubsub_subscription_id = module.storage.pubsub_subscription_id
+  kms_crypto_key_id      = module.storage.kms_crypto_key_id
+}
+
 module "storage" {
   source = "./modules/storage"
 

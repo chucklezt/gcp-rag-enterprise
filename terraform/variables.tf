@@ -25,6 +25,21 @@ variable "environment" {
   }
 }
 
+variable "project_number" {
+  description = "GCP project number (used for service agent IAM members)"
+  type        = string
+}
+
+variable "billing_account_id" {
+  description = "GCP billing account ID (format: XXXXXX-XXXXXX-XXXXXX)"
+  type        = string
+}
+
+variable "budget_alert_email" {
+  description = "Email address for billing budget alert notifications"
+  type        = string
+}
+
 variable "vpc_cidr" {
   description = "Primary subnet CIDR for the RAG VPC"
   type        = string
