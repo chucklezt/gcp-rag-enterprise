@@ -158,3 +158,43 @@ resource "google_cloud_run_v2_service_iam_member" "pubsub_sa_invoke_chunker" {
   role     = "roles/run.invoker"
   member   = "serviceAccount:service-${var.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
 }
+
+# ── Pub/Sub Push Subscription → rag-chunker ──────────────────────────────
+# Wired directly to the chunker service URI — no placeholder variables needed.
+# Uses OIDC auth so Cloud Run can verify the caller is Pub/Sub.
+
+# chunker-sa needs subscriber role on the push subscription
+resource "google_pubsub_subscription_iam_member" "chunker_sa_pubsub_subscriber" {
+  project      = var.project_id
+  subscription = google_pubsub_subscription.rag_ingest_push.name
+  role         = "roles/pubsub.subscriber"
+  member       = "serviceAccount:${var.chunker_sa_email}"
+}
+
+resource "google_pubsub_subscription" "rag_ingest_push" {
+  name    = "rag-ingest-push"
+  topic   = var.pubsub_topic_name
+  project = var.project_id
+  labels  = var.labels
+
+  ack_deadline_seconds       = 300
+  message_retention_duration = "86400s"
+  retain_acked_messages      = false
+
+  push_config {
+    push_endpoint = "${google_cloud_run_v2_service.rag_chunker.uri}/ingest"
+
+    oidc_token {
+      service_account_email = var.chunker_sa_email
+    }
+  }
+
+  retry_policy {
+    minimum_backoff = "10s"
+    maximum_backoff = "300s"
+  }
+
+  expiration_policy {
+    ttl = "" # Never expire
+  }
+}

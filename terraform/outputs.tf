@@ -30,7 +30,7 @@ output "pubsub_topic_id" {
 
 output "pubsub_subscription_id" {
   description = "ID of the rag-ingest-push Pub/Sub subscription"
-  value       = module.storage.pubsub_subscription_id
+  value       = module.cloud_run.pubsub_subscription_id
 }
 
 output "chunker_sa_email" {

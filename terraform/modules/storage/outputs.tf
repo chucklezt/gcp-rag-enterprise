@@ -28,7 +28,3 @@ output "pubsub_topic_name" {
   value       = google_pubsub_topic.rag_ingest_trigger.name
 }
 
-output "pubsub_subscription_id" {
-  description = "ID of the rag-ingest-push Pub/Sub subscription"
-  value       = google_pubsub_subscription.rag_ingest_push.id
-}

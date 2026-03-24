@@ -85,14 +85,6 @@ resource "google_storage_bucket_iam_member" "chunker_sa_gcs_reader" {
   member = google_service_account.chunker_sa.member
 }
 
-# Consume messages from the push subscription
-resource "google_pubsub_subscription_iam_member" "chunker_sa_pubsub_subscriber" {
-  project      = var.project_id
-  subscription = var.pubsub_subscription_id
-  role         = "roles/pubsub.subscriber"
-  member       = google_service_account.chunker_sa.member
-}
-
 # ── Pub/Sub service agent → chunker Cloud Run invoker ─────────────────────────
 # Pub/Sub must present a valid OIDC token when pushing to the chunker endpoint.
 # The Pub/Sub service agent is the identity that signs the token; it must have

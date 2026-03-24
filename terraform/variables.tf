@@ -46,18 +46,6 @@ variable "vpc_cidr" {
   default     = "10.10.0.0/24"
 }
 
-variable "chunker_service_url" {
-  description = "HTTPS URL of the rag-chunker Cloud Run service (set after cloud-run module is applied)"
-  type        = string
-  default     = "https://placeholder.invalid" # Replaced once rag-chunker is deployed
-}
-
-variable "chunker_service_account_email" {
-  description = "Email of the chunker-sa service account (set after security module is applied)"
-  type        = string
-  default     = "" # Replaced once security module is applied
-}
-
 variable "vpc_connector_cidr" {
   description = "/28 CIDR reserved for the Serverless VPC Access connector"
   type        = string

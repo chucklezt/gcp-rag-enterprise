@@ -102,35 +102,3 @@ resource "google_storage_notification" "ingest_notification" {
   depends_on = [google_pubsub_topic_iam_member.gcs_pubsub_publisher]
 }
 
-# ── Pub/Sub Push Subscription → Cloud Run chunker ────────────────────────────
-# Uses OIDC auth so Cloud Run can verify the caller is Pub/Sub.
-# The chunker SA must have roles/run.invoker; that binding lives in the
-# security/cloud-run modules to avoid circular dependencies.
-
-resource "google_pubsub_subscription" "rag_ingest_push" {
-  name    = "rag-ingest-push"
-  topic   = google_pubsub_topic.rag_ingest_trigger.name
-  project = var.project_id
-  labels  = var.labels
-
-  ack_deadline_seconds       = var.pubsub_ack_deadline_seconds
-  message_retention_duration = "86400s"
-  retain_acked_messages      = false
-
-  push_config {
-    push_endpoint = "${var.chunker_service_url}/ingest"
-
-    oidc_token {
-      service_account_email = var.chunker_service_account_email
-    }
-  }
-
-  retry_policy {
-    minimum_backoff = "10s"
-    maximum_backoff = "300s"
-  }
-
-  expiration_policy {
-    ttl = "" # Never expire
-  }
-}

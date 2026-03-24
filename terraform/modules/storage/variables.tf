@@ -25,18 +25,3 @@ variable "kms_key_rotation_period" {
   default     = "7776000s"
 }
 
-variable "chunker_service_url" {
-  description = "HTTPS URL of the rag-chunker Cloud Run service (push subscription endpoint)"
-  type        = string
-}
-
-variable "chunker_service_account_email" {
-  description = "Service account email used by the Pub/Sub push subscription to authenticate to the chunker"
-  type        = string
-}
-
-variable "pubsub_ack_deadline_seconds" {
-  description = "Pub/Sub push subscription acknowledgement deadline in seconds"
-  type        = number
-  default     = 300
-}

@@ -40,11 +40,6 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "pubsub_subscription_id" {
-  description = "ID of the rag-ingest-push Pub/Sub subscription"
-  type        = string
-}
-
 variable "kms_crypto_key_id" {
   description = "ID of the CMEK crypto key (for Secret Manager CMEK if desired)"
   type        = string

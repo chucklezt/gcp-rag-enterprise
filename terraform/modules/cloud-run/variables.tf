@@ -62,8 +62,8 @@ variable "bucket_name" {
   type        = string
 }
 
-variable "pubsub_subscription_id" {
-  description = "ID of the rag-ingest-push Pub/Sub subscription"
+variable "pubsub_topic_name" {
+  description = "Name of the rag-ingest-trigger Pub/Sub topic"
   type        = string
 }
 
