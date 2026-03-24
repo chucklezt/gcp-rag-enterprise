@@ -1,3 +1,7 @@
+locals {
+  chunker_url = "https://rag-chunker-${var.project_number}.${var.region}.run.app"
+}
+
 # ── rag-chunker Cloud Run service ───────────────────────────────────────────
 # Triggered by Pub/Sub push subscription on GCS finalize events.
 # Reads documents from GCS, chunks with LangChain, embeds via text-embedding-004,
@@ -8,7 +12,9 @@ resource "google_cloud_run_v2_service" "rag_chunker" {
   location = var.region
   project  = var.project_id
 
-  ingress = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  # Pub/Sub push delivery originates from Google's external infrastructure,
+  # so the chunker must accept external traffic. Auth is enforced via OIDC token.
+  ingress = "INGRESS_TRAFFIC_ALL"
 
   template {
     service_account = var.chunker_sa_email
@@ -182,10 +188,11 @@ resource "google_pubsub_subscription" "rag_ingest_push" {
   retain_acked_messages      = false
 
   push_config {
-    push_endpoint = "${google_cloud_run_v2_service.rag_chunker.uri}/ingest"
+    push_endpoint = local.chunker_url
 
     oidc_token {
       service_account_email = var.chunker_sa_email
+      audience              = local.chunker_url
     }
   }
 

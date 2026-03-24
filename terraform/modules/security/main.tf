@@ -92,6 +92,13 @@ resource "google_storage_bucket_iam_member" "chunker_sa_gcs_reader" {
 # Cloud Run service resource doesn't exist yet — tighten to service level in
 # the cloud-run module once the service is created.
 
+# Pub/Sub service agent needs to mint OIDC tokens as chunker-sa for push delivery
+resource "google_service_account_iam_member" "pubsub_sa_token_creator_chunker" {
+  service_account_id = google_service_account.chunker_sa.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:service-${var.project_number}@gcp-sa-pubsub.iam.gserviceaccount.com"
+}
+
 resource "google_project_iam_member" "pubsub_sa_run_invoker" {
   project = var.project_id
   role    = "roles/run.invoker"

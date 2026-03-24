@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import traceback
 from typing import Any
 
 import structlog
@@ -112,7 +113,7 @@ async def handle_pubsub(request: Request) -> Response:
             total_latency_ms=result["total_latency_ms"],
         )
     except Exception:
-        log.exception("document_processing_failed")
+        log.error("document_processing_failed", exception=traceback.format_exc())
         # Return 500 so Pub/Sub retries
         return Response(status_code=500)
 
