@@ -1,0 +1,122 @@
+# CI/CD pipeline — triggered by Cloud Build trigger on push to main.
+# Builds all three images in parallel, then deploys to Cloud Run in sequence.
+
+steps:
+  # ── Build all images in parallel (waitFor: ['-']) ─────────────────────────
+
+  - id: build-chunker
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-chunker:${_CHUNKER_TAG}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-chunker:latest"
+      - "services/chunker"
+    waitFor: ["-"]
+
+  - id: build-query-api
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-query-api:${_QUERY_API_TAG}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-query-api:latest"
+      - "services/query-api"
+    waitFor: ["-"]
+
+  - id: build-frontend
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      - "build"
+      - "--build-arg"
+      - "NEXT_PUBLIC_QUERY_API_URL=${_QUERY_API_URL}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-frontend:${_FRONTEND_TAG}"
+      - "-t"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-frontend:latest"
+      - "frontend"
+    waitFor: ["-"]
+
+  # ── Push all images (after their respective builds) ───────────────────────
+
+  - id: push-chunker
+    name: "gcr.io/cloud-builders/docker"
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-chunker"]
+    waitFor: ["build-chunker"]
+
+  - id: push-query-api
+    name: "gcr.io/cloud-builders/docker"
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-query-api"]
+    waitFor: ["build-query-api"]
+
+  - id: push-frontend
+    name: "gcr.io/cloud-builders/docker"
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-frontend"]
+    waitFor: ["build-frontend"]
+
+  # ── Deploy to Cloud Run (sequential — chunker first, then query API, then frontend) ──
+
+  - id: deploy-chunker
+    name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "rag-chunker"
+      - "--image"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-chunker:${_CHUNKER_TAG}"
+      - "--region"
+      - "${_REGION}"
+      - "--platform"
+      - "managed"
+    waitFor: ["push-chunker"]
+
+  - id: deploy-query-api
+    name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "rag-query-api"
+      - "--image"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-query-api:${_QUERY_API_TAG}"
+      - "--region"
+      - "${_REGION}"
+      - "--platform"
+      - "managed"
+    waitFor: ["deploy-chunker", "push-query-api"]
+
+  - id: deploy-frontend
+    name: "gcr.io/google.com/cloudsdktool/cloud-sdk"
+    entrypoint: gcloud
+    args:
+      - "run"
+      - "deploy"
+      - "rag-frontend"
+      - "--image"
+      - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-frontend:${_FRONTEND_TAG}"
+      - "--region"
+      - "${_REGION}"
+      - "--platform"
+      - "managed"
+    waitFor: ["deploy-query-api", "push-frontend"]
+
+substitutions:
+  _REGION: "us-central1"
+  _CHUNKER_TAG: "$COMMIT_SHA"
+  _QUERY_API_TAG: "$COMMIT_SHA"
+  _FRONTEND_TAG: "$COMMIT_SHA"
+  _QUERY_API_URL: "https://rag-query-api-42xnxsuadq-uc.a.run.app/query"
+
+images:
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-chunker:${_CHUNKER_TAG}"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-query-api:${_QUERY_API_TAG}"
+  - "${_REGION}-docker.pkg.dev/$PROJECT_ID/rag-docker/rag-frontend:${_FRONTEND_TAG}"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: "E2_HIGHCPU_8"
+
+timeout: "1800s"
