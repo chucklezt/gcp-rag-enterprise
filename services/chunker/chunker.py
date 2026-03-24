@@ -8,6 +8,8 @@ import time
 from typing import Any
 
 import structlog
+from bs4 import BeautifulSoup
+from ebooklib import ITEM_DOCUMENT, epub
 from google.cloud import aiplatform, storage
 from google.cloud.aiplatform.matching_engine import MatchingEngineIndex
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -31,6 +33,7 @@ def process_document(
     object_name: str,
     index_id: str,
     index_endpoint_id: str,
+    content_type: str = "",
 ) -> dict[str, Any]:
     """Download a document from GCS, chunk it, embed chunks, and upsert to Vector Search.
 
@@ -41,6 +44,7 @@ def process_document(
         object_name: GCS object key.
         index_id: Vertex AI Vector Search index ID.
         index_endpoint_id: Vertex AI Vector Search index endpoint ID.
+        content_type: MIME type of the document.
 
     Returns:
         Dict with chunk_count, embed_latency_ms, upsert_latency_ms, total_latency_ms.
@@ -50,11 +54,22 @@ def process_document(
     aiplatform.init(project=project_id, location=region)
 
     # ── Download from GCS ───────────────────────────────────────────────
-    text = _download_document(bucket_name, object_name)
+    local_path = _download_to_tempfile(bucket_name, object_name)
 
-    # ── Chunk ───────────────────────────────────────────────────────────
-    chunks = _split_text(text)
-    if not chunks:
+    # ── Chunk (branch by content type) ──────────────────────────────────
+    if content_type == "application/epub+zip":
+        chunk_records = _process_epub(local_path, object_name)
+    else:
+        text = _read_text(local_path)
+        chunks = _split_text(text)
+        chunk_records = [
+            {"text": chunk, "raw_id": f"{object_name}::chunk_{i}", "restricts": [
+                {"namespace": "source", "allow_list": [object_name]},
+            ]}
+            for i, chunk in enumerate(chunks)
+        ]
+
+    if not chunk_records:
         logger.info("no_chunks_produced", object_name=object_name)
         elapsed = int((time.monotonic() - t_start) * 1000)
         return {
@@ -64,37 +79,109 @@ def process_document(
             "total_latency_ms": elapsed,
         }
 
+    texts = [r["text"] for r in chunk_records]
+
     # ── Embed ───────────────────────────────────────────────────────────
     t_embed = time.monotonic()
-    embeddings = _embed_chunks(chunks)
+    embeddings = _embed_chunks(texts)
     embed_latency_ms = int((time.monotonic() - t_embed) * 1000)
 
     # ── Upsert to Vector Search ─────────────────────────────────────────
     t_upsert = time.monotonic()
-    datapoints = _build_datapoints(object_name, chunks, embeddings)
+    datapoints = _build_datapoints(chunk_records, embeddings)
     _upsert_vectors(index_id, datapoints)
     upsert_latency_ms = int((time.monotonic() - t_upsert) * 1000)
 
     total_latency_ms = int((time.monotonic() - t_start) * 1000)
 
     return {
-        "chunk_count": len(chunks),
+        "chunk_count": len(chunk_records),
         "embed_latency_ms": embed_latency_ms,
         "upsert_latency_ms": upsert_latency_ms,
         "total_latency_ms": total_latency_ms,
     }
 
 
-def _download_document(bucket_name: str, object_name: str) -> str:
-    """Download a GCS object and return its text content."""
+def _download_to_tempfile(bucket_name: str, object_name: str) -> str:
+    """Download a GCS object to a temporary file and return its path."""
     client = storage.Client()
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(object_name)
 
-    with tempfile.NamedTemporaryFile(suffix=".tmp") as tmp:
-        blob.download_to_filename(tmp.name)
-        with open(tmp.name, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
+    suffix = "." + object_name.rsplit(".", 1)[-1] if "." in object_name else ".tmp"
+    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    blob.download_to_filename(tmp.name)
+    return tmp.name
+
+
+def _read_text(path: str) -> str:
+    """Read a file as UTF-8 text."""
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read()
+
+
+def _process_epub(local_path: str, object_name: str) -> list[dict[str, Any]]:
+    """Extract chapters from an EPUB and chunk each independently.
+
+    Args:
+        local_path: Path to the downloaded EPUB file.
+        object_name: GCS object key (used for datapoint IDs and metadata).
+
+    Returns:
+        List of chunk records with text, raw_id, and restricts.
+    """
+    book = epub.read_epub(local_path, options={"ignore_ncx": True})
+    book_title = book.get_metadata("DC", "title")
+    book_title = book_title[0][0] if book_title else object_name
+
+    splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
+        encoding_name="cl100k_base",
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP,
+    )
+
+    chunk_records: list[dict[str, Any]] = []
+    chapter_index = 0
+
+    for item in book.get_items_of_type(ITEM_DOCUMENT):
+        html_content = item.get_content().decode("utf-8", errors="replace")
+        soup = BeautifulSoup(html_content, "html.parser")
+
+        text = soup.get_text(separator="\n", strip=True)
+        if not text.strip():
+            continue
+
+        # Extract chapter title from the first heading, fall back to filename
+        heading = soup.find(["h1", "h2", "h3"])
+        chapter_title = heading.get_text(strip=True) if heading else item.get_name()
+
+        chunks = splitter.split_text(text)
+
+        for i, chunk in enumerate(chunks):
+            raw_id = f"{object_name}::ch{chapter_index}::chunk_{i}"
+            chunk_records.append({
+                "text": chunk,
+                "raw_id": raw_id,
+                "restricts": [
+                    {"namespace": "source", "allow_list": [object_name]},
+                    {"namespace": "book_title", "allow_list": [book_title]},
+                    {"namespace": "chapter_title", "allow_list": [chapter_title]},
+                    {"namespace": "chapter_index", "allow_list": [str(chapter_index)]},
+                    {"namespace": "source_file", "allow_list": [item.get_name()]},
+                ],
+            })
+
+        chapter_index += 1
+
+    logger.info(
+        "epub_extracted",
+        object_name=object_name,
+        book_title=book_title,
+        chapters=chapter_index,
+        total_chunks=len(chunk_records),
+    )
+
+    return chunk_records
 
 
 def _split_text(text: str) -> list[str]:
@@ -131,26 +218,22 @@ def _embed_chunks(chunks: list[str]) -> list[list[float]]:
 
 
 def _build_datapoints(
-    object_name: str,
-    chunks: list[str],
+    chunk_records: list[dict[str, Any]],
     embeddings: list[list[float]],
 ) -> list[dict[str, Any]]:
     """Build Vector Search datapoints with deterministic IDs.
 
-    Each datapoint ID is a hash of the source object name and chunk index,
+    Each datapoint ID is a hash of the raw_id from the chunk record,
     ensuring idempotent upserts on re-processing.
     """
     datapoints = []
-    for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-        raw_id = f"{object_name}::chunk_{i}"
-        datapoint_id = hashlib.sha256(raw_id.encode()).hexdigest()[:40]
+    for record, embedding in zip(chunk_records, embeddings):
+        datapoint_id = hashlib.sha256(record["raw_id"].encode()).hexdigest()[:40]
         datapoints.append(
             {
                 "datapoint_id": datapoint_id,
                 "feature_vector": embedding,
-                "restricts": [
-                    {"namespace": "source", "allow_list": [object_name]},
-                ],
+                "restricts": record["restricts"],
             }
         )
     return datapoints

@@ -86,6 +86,7 @@ async def handle_pubsub(request: Request) -> Response:
         "text/markdown",
         "text/csv",
         "application/json",
+        "application/epub+zip",
     }
     if content_type not in supported_types:
         log.info("skipping_unsupported_content_type")
@@ -99,6 +100,7 @@ async def handle_pubsub(request: Request) -> Response:
             object_name=object_name,
             index_id=VECTOR_SEARCH_INDEX_ID,
             index_endpoint_id=VECTOR_SEARCH_INDEX_ENDPOINT_ID,
+            content_type=content_type,
         )
         log.info(
             "document_processed",

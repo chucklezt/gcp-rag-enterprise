@@ -6,3 +6,5 @@ google-cloud-aiplatform==1.74.0
 langchain-text-splitters==0.3.4
 structlog==24.4.0
 tiktoken==0.8.0
+ebooklib==0.18
+beautifulsoup4==4.12.3
