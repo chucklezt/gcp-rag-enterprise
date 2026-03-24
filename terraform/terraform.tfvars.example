@@ -4,3 +4,7 @@ zone               = "us-central1-a"
 environment        = "dev"
 vpc_cidr           = "10.10.0.0/24"
 vpc_connector_cidr = "10.10.1.0/28"
+
+# Set after cloud-run and security modules are applied
+chunker_service_url           = "https://rag-chunker-HASH-uc.a.run.app"
+chunker_service_account_email = "chunker-sa@YOUR_GCP_PROJECT_ID.iam.gserviceaccount.com"

@@ -12,3 +12,23 @@ output "vpc_connector_id" {
   description = "ID of the Serverless VPC Access connector"
   value       = module.networking.vpc_connector_id
 }
+
+output "bucket_name" {
+  description = "Name of the RAG documents GCS bucket"
+  value       = module.storage.bucket_name
+}
+
+output "kms_crypto_key_id" {
+  description = "ID of the CMEK crypto key"
+  value       = module.storage.kms_crypto_key_id
+}
+
+output "pubsub_topic_id" {
+  description = "ID of the rag-ingest-trigger Pub/Sub topic"
+  value       = module.storage.pubsub_topic_id
+}
+
+output "pubsub_subscription_id" {
+  description = "ID of the rag-ingest-push Pub/Sub subscription"
+  value       = module.storage.pubsub_subscription_id
+}
