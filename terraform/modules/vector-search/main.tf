@@ -36,3 +36,18 @@ resource "google_vertex_ai_index_endpoint" "rag_endpoint" {
 
   labels = var.labels
 }
+
+resource "google_vertex_ai_index_endpoint_deployed_index" "rag_deployed_index" {
+  index_endpoint    = google_vertex_ai_index_endpoint.rag_endpoint.id
+  index             = google_vertex_ai_index.rag_index.id
+  deployed_index_id = "rag_embeddings_deployed"
+  display_name      = "rag-embeddings-deployed-${var.environment}"
+
+  dedicated_resources {
+    machine_spec {
+      machine_type = "e2-standard-2"
+    }
+    min_replica_count = 1
+    max_replica_count = 2
+  }
+}

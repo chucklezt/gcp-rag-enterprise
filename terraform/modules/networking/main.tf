@@ -126,3 +126,22 @@ resource "google_compute_firewall" "allow_health_checks" {
   # Google Cloud health check prober ranges
   source_ranges = ["35.191.0.0/16", "130.211.0.0/22"]
 }
+
+# ── Private Service Access (VPC Peering for Vertex AI Vector Search) ───────
+# Vertex AI index endpoints with private networking require a peering
+# connection to Google's servicenetworking VPC.
+
+resource "google_compute_global_address" "private_service_range" {
+  name          = "rag-private-service-range-${var.environment}"
+  project       = var.project_id
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.rag_vpc.id
+}
+
+resource "google_service_networking_connection" "private_service_access" {
+  network                 = google_compute_network.rag_vpc.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_service_range.name]
+}

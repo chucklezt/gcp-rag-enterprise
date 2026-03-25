@@ -32,3 +32,8 @@ output "vpc_connector_name" {
   description = "Name of the Serverless VPC Access connector"
   value       = google_vpc_access_connector.rag_connector.name
 }
+
+output "private_service_connection_peering" {
+  description = "Peering name of the private service networking connection"
+  value       = google_service_networking_connection.private_service_access.peering
+}

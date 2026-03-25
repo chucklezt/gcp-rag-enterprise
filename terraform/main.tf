@@ -70,4 +70,7 @@ module "vector_search" {
   region         = var.region
   environment    = var.environment
   labels         = local.common_labels
+
+  # VPC peering must be established before the private endpoint can serve
+  depends_on = [module.networking]
 }
