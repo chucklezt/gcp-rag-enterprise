@@ -40,7 +40,10 @@ def retrieve_chunks(
     deployed_index_id: str,
     embedding: list[float],
 ) -> tuple[list[dict[str, Any]], int]:
-    """Query Vertex AI Vector Search for the top-K nearest chunks.
+    """Query Vertex AI Vector Search via the private VPC-peered endpoint.
+
+    Uses the match() method which connects over the private gRPC stub
+    to the VPC-peered index endpoint.
 
     Args:
         index_endpoint_id: Full resource name of the index endpoint.
@@ -53,7 +56,7 @@ def retrieve_chunks(
     endpoint = MatchingEngineIndexEndpoint(index_endpoint_name=index_endpoint_id)
 
     t_start = time.monotonic()
-    response = endpoint.find_neighbors(
+    response = endpoint.match(
         deployed_index_id=deployed_index_id,
         queries=[embedding],
         num_neighbors=TOP_K,
