@@ -15,6 +15,7 @@ from collections.abc import AsyncGenerator
 import structlog
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import aiplatform
 from sse_starlette.sse import EventSourceResponse
 
@@ -35,6 +36,14 @@ structlog.configure(
 logger = structlog.get_logger()
 
 app = FastAPI(title="rag-query-api", docs_url=None, redoc_url=None)
+
+# TODO: Restrict allow_origins to the frontend URL before production use.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 PROJECT_ID = os.environ["PROJECT_ID"]
 REGION = os.environ["REGION"]
