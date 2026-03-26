@@ -135,6 +135,9 @@ if [[ "${1:-}" == "--teardown" ]]; then
   read -r -p "Proceed? (yes/no): " CONFIRM
   if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
   cd "$TERRAFORM_DIR"
+  # WARNING: Never target module.vector_search.google_vertex_ai_index.rag_index here.
+  # The index contains all vector embeddings and takes hours to rebuild from scratch.
+  # Only destroy the deployed index and endpoint — the index itself must be preserved.
   terraform destroy \
     -target=module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
     -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
@@ -156,6 +159,9 @@ if [[ "${1:-}" == "--full-teardown" ]]; then
   read -r -p "Proceed? (yes/no): " CONFIRM
   if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
   cd "$TERRAFORM_DIR"
+  # WARNING: Never target module.vector_search.google_vertex_ai_index.rag_index here.
+  # The index contains all vector embeddings and takes hours to rebuild from scratch.
+  # Only destroy the deployed index and endpoint — the index itself must be preserved.
   terraform destroy \
     -target=module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
     -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
