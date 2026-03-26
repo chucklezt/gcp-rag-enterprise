@@ -24,6 +24,12 @@ resource "google_vertex_ai_index" "rag_index" {
 
   index_update_method = "STREAM_UPDATE"
 
+  # The index contains all vector embeddings and takes hours to rebuild.
+  # Prevent accidental destruction via terraform destroy or target changes.
+  lifecycle {
+    prevent_destroy = true
+  }
+
   labels = var.labels
 }
 
