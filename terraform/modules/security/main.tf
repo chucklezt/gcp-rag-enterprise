@@ -1,3 +1,22 @@
+# ── Firestore ────────────────────────────────────────────────────────────────
+# Stores chunk text keyed by Vector Search datapoint ID so the query API
+# can retrieve the original text after a nearest-neighbor match.
+
+resource "google_project_service" "firestore" {
+  project            = var.project_id
+  service            = "firestore.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_firestore_database" "rag_chunks" {
+  project     = var.project_id
+  name        = "rag-chunks"
+  location_id = var.region
+  type        = "FIRESTORE_NATIVE"
+
+  depends_on = [google_project_service.firestore]
+}
+
 # ── Service Accounts ─────────────────────────────────────────────────────────
 
 resource "google_service_account" "chunker_sa" {
@@ -50,6 +69,7 @@ locals {
     "roles/monitoring.metricWriter",
     "roles/cloudtrace.agent",
     "roles/aiplatform.user", # text-embedding-004 + Vector Search upsert
+    "roles/datastore.user",  # Firestore read/write for chunk text storage
   ]
 
   query_api_project_roles = [
@@ -57,6 +77,7 @@ locals {
     "roles/monitoring.metricWriter",
     "roles/cloudtrace.agent",
     "roles/aiplatform.user", # text-embedding-004 + Vector Search query + Gemini
+    "roles/datastore.user",  # Firestore read for chunk text retrieval
   ]
 }
 

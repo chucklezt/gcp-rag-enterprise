@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import structlog
+from google.cloud import firestore
 from google.cloud.aiplatform.matching_engine import MatchingEngineIndexEndpoint
 from vertexai.language_models import TextEmbeddingInput, TextEmbeddingModel
 
@@ -83,4 +86,38 @@ def retrieve_chunks(
             }
         )
 
+    # Fetch chunk text from Firestore in parallel
+    project_id = os.environ.get("PROJECT_ID", "")
+    if project_id and matches:
+        chunk_texts = _fetch_chunk_texts(project_id, [m["id"] for m in matches])
+        for match in matches:
+            match["content"] = chunk_texts.get(match["id"], "")
+
     return matches, latency_ms
+
+
+def _fetch_chunk_texts(
+    project_id: str,
+    datapoint_ids: list[str],
+) -> dict[str, str]:
+    """Fetch chunk text from Firestore for the given datapoint IDs.
+
+    Args:
+        project_id: GCP project ID.
+        datapoint_ids: List of Vector Search datapoint IDs (Firestore doc IDs).
+
+    Returns:
+        Dict mapping datapoint ID to chunk text.
+    """
+    db = firestore.Client(project=project_id, database="rag-chunks")
+
+    def _get_doc(doc_id: str) -> tuple[str, str]:
+        doc = db.collection("chunks").document(doc_id).get()
+        if doc.exists:
+            return doc_id, doc.to_dict().get("text", "")
+        return doc_id, ""
+
+    with ThreadPoolExecutor(max_workers=len(datapoint_ids)) as executor:
+        results = executor.map(_get_doc, datapoint_ids)
+
+    return dict(results)

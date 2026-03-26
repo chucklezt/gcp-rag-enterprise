@@ -11,7 +11,7 @@ import structlog
 from bs4 import BeautifulSoup
 from docx import Document as DocxDocument
 from ebooklib import ITEM_DOCUMENT, epub
-from google.cloud import aiplatform, storage
+from google.cloud import aiplatform, firestore, storage
 from google.cloud.aiplatform.matching_engine import MatchingEngineIndex
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pptx import Presentation
@@ -95,9 +95,12 @@ def process_document(
     embeddings = _embed_chunks(texts)
     embed_latency_ms = int((time.monotonic() - t_embed) * 1000)
 
+    # ── Store chunk text in Firestore ─────────────────────────────────────
+    datapoints = _build_datapoints(chunk_records, embeddings)
+    _store_chunks_firestore(project_id, chunk_records, datapoints, object_name)
+
     # ── Upsert to Vector Search ─────────────────────────────────────────
     t_upsert = time.monotonic()
-    datapoints = _build_datapoints(chunk_records, embeddings)
     _upsert_vectors(index_id, datapoints)
     upsert_latency_ms = int((time.monotonic() - t_upsert) * 1000)
 
@@ -427,6 +430,41 @@ def _build_datapoints(
             }
         )
     return datapoints
+
+
+def _store_chunks_firestore(
+    project_id: str,
+    chunk_records: list[dict[str, Any]],
+    datapoints: list[dict[str, Any]],
+    object_name: str,
+) -> None:
+    """Write chunk text to Firestore keyed by Vector Search datapoint ID.
+
+    Args:
+        project_id: GCP project ID.
+        chunk_records: List of chunk records with text and raw_id.
+        datapoints: List of datapoints with datapoint_id (matching chunk_records order).
+        object_name: GCS object key (stored as metadata).
+    """
+    db = firestore.Client(project=project_id, database="rag-chunks")
+    pairs = list(zip(chunk_records, datapoints))
+
+    # Firestore batches are limited to 500 writes
+    for start in range(0, len(pairs), 500):
+        batch = db.batch()
+        for record, datapoint in pairs[start : start + 500]:
+            doc_ref = db.collection("chunks").document(datapoint["datapoint_id"])
+            batch.set(doc_ref, {
+                "text": record["text"],
+                "raw_id": record["raw_id"],
+                "object_name": object_name,
+            })
+        batch.commit()
+    logger.info(
+        "firestore_chunks_stored",
+        object_name=object_name,
+        chunk_count=len(chunk_records),
+    )
 
 
 def _upsert_vectors(
