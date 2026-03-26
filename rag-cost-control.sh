@@ -134,15 +134,44 @@ if [[ "${1:-}" == "--teardown" ]]; then
   echo ""
   read -r -p "Proceed? (yes/no): " CONFIRM
   if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
+
+  # Uses direct gcloud commands instead of terraform destroy to avoid
+  # dependency-chain issues where Terraform pulls in the VS index
+  # (which has prevent_destroy = true) and aborts the entire plan.
+
+  ENDPOINT_ID=$(gcloud ai index-endpoints list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(name)" 2>/dev/null | head -1 || echo "")
+
+  if [ -n "$ENDPOINT_ID" ]; then
+    check "Undeploying index from endpoint..."
+    gcloud ai index-endpoints undeploy-index "$ENDPOINT_ID" \
+      --deployed-index-id=rag_embeddings_deployed \
+      --region="$REGION" --project="$PROJECT" || true
+
+    check "Deleting index endpoint..."
+    gcloud ai index-endpoints delete "$ENDPOINT_ID" \
+      --region="$REGION" --project="$PROJECT" --quiet || true
+  else
+    ok "No index endpoint found — skipping"
+  fi
+
+  check "Deleting VPC connector..."
+  gcloud compute networks vpc-access connectors delete rag-connector-dev \
+    --region="$REGION" --project="$PROJECT" --quiet || true
+
+  check "Removing destroyed resources from Terraform state..."
   cd "$TERRAFORM_DIR"
-  # WARNING: Never target module.vector_search.google_vertex_ai_index.rag_index here.
-  # The index contains all vector embeddings and takes hours to rebuild from scratch.
-  # Only destroy the deployed index and endpoint — the index itself must be preserved.
-  terraform destroy \
-    -target=module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
-    -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
-    -target=module.networking.google_vpc_access_connector.rag_connector \
-    -auto-approve
+  terraform state rm \
+    module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
+    2>/dev/null || true
+  terraform state rm \
+    module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
+    2>/dev/null || true
+  terraform state rm \
+    module.networking.google_vpc_access_connector.rag_connector \
+    2>/dev/null || true
+
   echo ""
   echo -e "${GREEN}Teardown complete. Savings: ~\$73/mo${NC}"
   echo "Run './rag-cost-control.sh --restore' to bring services back up."
@@ -158,18 +187,52 @@ if [[ "${1:-}" == "--full-teardown" ]]; then
   echo ""
   read -r -p "Proceed? (yes/no): " CONFIRM
   if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
+
+  # Uses direct gcloud commands for VS resources to avoid dependency-chain
+  # issues where Terraform pulls in the VS index (prevent_destroy = true).
+  # Cloud Run, NAT, and router are safe to destroy via Terraform since they
+  # have no dependency on the VS index.
+
+  ENDPOINT_ID=$(gcloud ai index-endpoints list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(name)" 2>/dev/null | head -1 || echo "")
+
+  if [ -n "$ENDPOINT_ID" ]; then
+    check "Undeploying index from endpoint..."
+    gcloud ai index-endpoints undeploy-index "$ENDPOINT_ID" \
+      --deployed-index-id=rag_embeddings_deployed \
+      --region="$REGION" --project="$PROJECT" || true
+
+    check "Deleting index endpoint..."
+    gcloud ai index-endpoints delete "$ENDPOINT_ID" \
+      --region="$REGION" --project="$PROJECT" --quiet || true
+  else
+    ok "No index endpoint found — skipping"
+  fi
+
+  check "Deleting VPC connector..."
+  gcloud compute networks vpc-access connectors delete rag-connector-dev \
+    --region="$REGION" --project="$PROJECT" --quiet || true
+
+  check "Removing VS resources from Terraform state..."
   cd "$TERRAFORM_DIR"
-  # WARNING: Never target module.vector_search.google_vertex_ai_index.rag_index here.
-  # The index contains all vector embeddings and takes hours to rebuild from scratch.
-  # Only destroy the deployed index and endpoint — the index itself must be preserved.
+  terraform state rm \
+    module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
+    2>/dev/null || true
+  terraform state rm \
+    module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
+    2>/dev/null || true
+  terraform state rm \
+    module.networking.google_vpc_access_connector.rag_connector \
+    2>/dev/null || true
+
+  check "Destroying Cloud Run, NAT, and router via Terraform..."
   terraform destroy \
-    -target=module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
-    -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
     -target=module.cloud_run \
-    -target=module.networking.google_vpc_access_connector.rag_connector \
     -target=module.networking.google_compute_router_nat.rag_nat \
     -target=module.networking.google_compute_router.rag_router \
     -auto-approve
+
   echo ""
   echo -e "${GREEN}Full teardown complete. Savings: ~\$79/mo${NC}"
   echo "Run './rag-cost-control.sh --full-restore' to rebuild everything."
