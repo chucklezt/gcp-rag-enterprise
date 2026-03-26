@@ -63,6 +63,17 @@ def retrieve_chunks(
     )
     latency_ms = int((time.monotonic() - t_start) * 1000)
 
+    logger.info(
+        "vector_search_raw_response",
+        service="rag-query-api",
+        deployed_index_id=deployed_index_id,
+        num_queries=len(response),
+        num_neighbors=len(response[0]) if response else 0,
+        matches=[
+            {"id": n.id, "distance": n.distance} for n in response[0]
+        ] if response else [],
+    )
+
     matches = []
     for neighbor in response[0]:
         matches.append(
