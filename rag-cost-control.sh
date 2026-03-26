@@ -256,11 +256,16 @@ if [[ "${1:-}" == "--restore" ]]; then
     check "Deploying index to endpoint (20-40 min)..."
     # INDEX_ID is the full resource path: projects/.../locations/.../indexes/...
     # The short numeric ID returns NOT_FOUND with gcloud deploy-index.
-    gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
+    DEPLOY_OUTPUT=$(gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
       --index="$INDEX_ID" \
-      --region="$REGION" --project="$PROJECT" 2>/dev/null || true
+      --region="$REGION" --project="$PROJECT" 2>&1) || true
+    echo "$DEPLOY_OUTPUT"
+    OPERATION_ID=$(echo "$DEPLOY_OUTPUT" | grep -oP '(?<=operations/)\S+' || echo "")
+    if [ -n "$OPERATION_ID" ]; then
+      ok "Deploy operation started: $OPERATION_ID"
+    fi
     check "Updating Secret Manager with new endpoint ID..."
     echo -n "$ENDPOINT_ID" | gcloud secrets versions add rag-vector-search-index-endpoint-id \
       --data-file=- --project="$PROJECT"
@@ -297,11 +302,16 @@ if [[ "${1:-}" == "--full-restore" ]]; then
   if [ -n "$ENDPOINT_ID" ] && [ -n "$INDEX_ID" ]; then
     # INDEX_ID is the full resource path: projects/.../locations/.../indexes/...
     # The short numeric ID returns NOT_FOUND with gcloud deploy-index.
-    gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
+    DEPLOY_OUTPUT=$(gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
       --index="$INDEX_ID" \
-      --region="$REGION" --project="$PROJECT" 2>/dev/null || true
+      --region="$REGION" --project="$PROJECT" 2>&1) || true
+    echo "$DEPLOY_OUTPUT"
+    OPERATION_ID=$(echo "$DEPLOY_OUTPUT" | grep -oP '(?<=operations/)\S+' || echo "")
+    if [ -n "$OPERATION_ID" ]; then
+      ok "Deploy operation started: $OPERATION_ID"
+    fi
     check "Updating Secret Manager with new endpoint ID..."
     echo -n "$ENDPOINT_ID" | gcloud secrets versions add rag-vector-search-index-endpoint-id \
       --data-file=- --project="$PROJECT"
