@@ -189,7 +189,7 @@ if [[ "${1:-}" == "--restore" ]]; then
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
       --index="$INDEX_ID" \
-      --region="$REGION" --project="$PROJECT" 2>/dev/null
+      --region="$REGION" --project="$PROJECT" 2>/dev/null || true
     check "Updating Secret Manager with new endpoint ID..."
     echo -n "$ENDPOINT_ID" | gcloud secrets versions add rag-vector-search-index-endpoint-id \
       --data-file=- --project="$PROJECT"
@@ -228,7 +228,7 @@ if [[ "${1:-}" == "--full-restore" ]]; then
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
       --index="$INDEX_ID" \
-      --region="$REGION" --project="$PROJECT" 2>/dev/null
+      --region="$REGION" --project="$PROJECT" 2>/dev/null || true
     check "Updating Secret Manager with new endpoint ID..."
     echo -n "$ENDPOINT_ID" | gcloud secrets versions add rag-vector-search-index-endpoint-id \
       --data-file=- --project="$PROJECT"
