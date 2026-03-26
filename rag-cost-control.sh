@@ -188,9 +188,11 @@ if [[ "${1:-}" == "--restore" ]]; then
     -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
     -auto-approve
   ENDPOINT_ID=$(terraform output -raw vector_search_endpoint_name 2>/dev/null || echo "")
-  INDEX_ID=$(terraform output -raw vector_search_index_name 2>/dev/null || echo "")
+  INDEX_ID=$(terraform output -raw vector_search_index_id 2>/dev/null || echo "")
   if [ -n "$ENDPOINT_ID" ] && [ -n "$INDEX_ID" ]; then
     check "Deploying index to endpoint (20-40 min)..."
+    # INDEX_ID is the full resource path: projects/.../locations/.../indexes/...
+    # The short numeric ID returns NOT_FOUND with gcloud deploy-index.
     gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
@@ -227,9 +229,11 @@ if [[ "${1:-}" == "--full-restore" ]]; then
     -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
     -auto-approve
   ENDPOINT_ID=$(terraform output -raw vector_search_endpoint_name 2>/dev/null || echo "")
-  INDEX_ID=$(terraform output -raw vector_search_index_name 2>/dev/null || echo "")
+  INDEX_ID=$(terraform output -raw vector_search_index_id 2>/dev/null || echo "")
   check "Step 3/3: Deploying index (20-40 min)..."
   if [ -n "$ENDPOINT_ID" ] && [ -n "$INDEX_ID" ]; then
+    # INDEX_ID is the full resource path: projects/.../locations/.../indexes/...
+    # The short numeric ID returns NOT_FOUND with gcloud deploy-index.
     gcloud ai index-endpoints deploy-index "$ENDPOINT_ID" \
       --deployed-index-id=rag_embeddings_deployed \
       --display-name="RAG Embeddings Deployed" \
