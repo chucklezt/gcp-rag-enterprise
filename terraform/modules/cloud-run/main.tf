@@ -167,6 +167,16 @@ resource "google_cloud_run_v2_service_iam_member" "query_api_public_invoker" {
   member   = "allUsers"
 }
 
+# chunker-sa must also have invoker permission — Pub/Sub signs OIDC tokens
+# as chunker-sa, so the service account itself needs to invoke the endpoint.
+resource "google_cloud_run_v2_service_iam_member" "chunker_sa_invoke_chunker" {
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.rag_chunker.name
+  role     = "roles/run.invoker"
+  member   = "serviceAccount:${var.chunker_sa_email}"
+}
+
 resource "google_cloud_run_v2_service_iam_member" "pubsub_sa_invoke_chunker" {
   project  = var.project_id
   location = var.region
