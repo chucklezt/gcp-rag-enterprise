@@ -66,7 +66,7 @@ def retrieve_chunks(
     )
     latency_ms = int((time.monotonic() - t_start) * 1000)
 
-    logger.info(
+    logger.debug(
         "vector_search_raw_response",
         service="rag-query-api",
         deployed_index_id=deployed_index_id,
