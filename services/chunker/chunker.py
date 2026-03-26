@@ -454,11 +454,22 @@ def _store_chunks_firestore(
         batch = db.batch()
         for record, datapoint in pairs[start : start + 500]:
             doc_ref = db.collection("chunks").document(datapoint["datapoint_id"])
-            batch.set(doc_ref, {
+            # Extract metadata from restricts for citation display
+            restricts_map = {
+                r["namespace"]: r["allow_list"][0]
+                for r in record.get("restricts", [])
+                if r.get("allow_list")
+            }
+            doc_data = {
                 "text": record["text"],
                 "raw_id": record["raw_id"],
                 "object_name": object_name,
-            })
+            }
+            for field in ("book_title", "chapter_title", "chapter_index",
+                          "page_number", "slide_number", "slide_title"):
+                if field in restricts_map:
+                    doc_data[field] = restricts_map[field]
+            batch.set(doc_ref, doc_data)
         batch.commit()
     logger.info(
         "firestore_chunks_stored",

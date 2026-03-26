@@ -17,7 +17,9 @@ SYSTEM_INSTRUCTION = (
     "You are a helpful assistant that answers questions based on the provided context. "
     "Use only the information from the context chunks to answer. "
     "If the context does not contain enough information to answer, say so clearly. "
-    "Cite which chunk(s) support your answer when possible."
+    "Cite sources by book title and chapter when available, "
+    "e.g. '(Book Title, Chapter Name)'. "
+    "If no book or chapter metadata is provided, cite by chunk number."
 )
 
 
@@ -34,7 +36,15 @@ def build_prompt(question: str, chunks: list[dict[str, Any]]) -> str:
     context_parts = []
     for i, chunk in enumerate(chunks, 1):
         content = chunk.get("content", f"[Chunk ID: {chunk['id']}]")
-        context_parts.append(f"[Chunk {i}] (ID: {chunk['id']})\n{content}")
+        source_parts = []
+        if chunk.get("book_title"):
+            source_parts.append(f"Book: {chunk['book_title']}")
+        if chunk.get("chapter_title"):
+            source_parts.append(f"Chapter: {chunk['chapter_title']}")
+        source_label = f" | {', '.join(source_parts)}" if source_parts else ""
+        context_parts.append(
+            f"[Chunk {i}] (ID: {chunk['id']}{source_label})\n{content}"
+        )
 
     context_block = "\n\n".join(context_parts)
 

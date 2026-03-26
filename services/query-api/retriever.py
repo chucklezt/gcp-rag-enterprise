@@ -86,36 +86,40 @@ def retrieve_chunks(
             }
         )
 
-    # Fetch chunk text from Firestore in parallel
+    # Fetch chunk text and metadata from Firestore in parallel
     project_id = os.environ.get("PROJECT_ID", "")
     if project_id and matches:
-        chunk_texts = _fetch_chunk_texts(project_id, [m["id"] for m in matches])
+        chunk_docs = _fetch_chunk_docs(project_id, [m["id"] for m in matches])
         for match in matches:
-            match["content"] = chunk_texts.get(match["id"], "")
+            doc_data = chunk_docs.get(match["id"], {})
+            match["content"] = doc_data.get("text", "")
+            match["book_title"] = doc_data.get("book_title", "")
+            match["chapter_title"] = doc_data.get("chapter_title", "")
+            match["chapter_index"] = doc_data.get("chapter_index", "")
 
     return matches, latency_ms
 
 
-def _fetch_chunk_texts(
+def _fetch_chunk_docs(
     project_id: str,
     datapoint_ids: list[str],
-) -> dict[str, str]:
-    """Fetch chunk text from Firestore for the given datapoint IDs.
+) -> dict[str, dict[str, Any]]:
+    """Fetch chunk documents from Firestore for the given datapoint IDs.
 
     Args:
         project_id: GCP project ID.
         datapoint_ids: List of Vector Search datapoint IDs (Firestore doc IDs).
 
     Returns:
-        Dict mapping datapoint ID to chunk text.
+        Dict mapping datapoint ID to the full Firestore document fields.
     """
     db = firestore.Client(project=project_id, database="rag-chunks")
 
-    def _get_doc(doc_id: str) -> tuple[str, str]:
+    def _get_doc(doc_id: str) -> tuple[str, dict[str, Any]]:
         doc = db.collection("chunks").document(doc_id).get()
         if doc.exists:
-            return doc_id, doc.to_dict().get("text", "")
-        return doc_id, ""
+            return doc_id, doc.to_dict()
+        return doc_id, {}
 
     with ThreadPoolExecutor(max_workers=len(datapoint_ids)) as executor:
         results = executor.map(_get_doc, datapoint_ids)
