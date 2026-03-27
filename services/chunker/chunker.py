@@ -88,6 +88,20 @@ def process_document(
             "total_latency_ms": elapsed,
         }
 
+    # ── Idempotency: skip chunks already in Vector Search ───────────────
+    chunk_records = _filter_existing_chunks(chunk_records, index_id)
+
+    if not chunk_records:
+        logger.info("all_chunks_already_indexed", object_name=object_name)
+        elapsed = int((time.monotonic() - t_start) * 1000)
+        return {
+            "chunk_count": 0,
+            "embed_latency_ms": 0,
+            "upsert_latency_ms": 0,
+            "total_latency_ms": elapsed,
+            "skipped": True,
+        }
+
     texts = [r["text"] for r in chunk_records]
 
     # ── Embed ───────────────────────────────────────────────────────────
@@ -385,6 +399,61 @@ def _split_text(text: str) -> list[str]:
         chunk_overlap=CHUNK_OVERLAP,
     )
     return splitter.split_text(text)
+
+
+def _filter_existing_chunks(
+    chunk_records: list[dict[str, Any]],
+    index_id: str,
+) -> list[dict[str, Any]]:
+    """Return only chunk records whose datapoint IDs are not already in Vector Search.
+
+    Uses the same SHA-256 deterministic ID scheme as _build_datapoints so the
+    pre-check is consistent with what will be upserted. Batches in groups of 300
+    to stay within the get_datapoints() API limit.
+
+    Args:
+        chunk_records: All chunk records produced for this document.
+        index_id: Vertex AI Vector Search index resource name or ID.
+
+    Returns:
+        Filtered list containing only records that need to be embedded and upserted.
+    """
+    # Build the same deterministic IDs that _build_datapoints would produce
+    id_to_record = {
+        hashlib.sha256(r["raw_id"].encode()).hexdigest()[:40]: r
+        for r in chunk_records
+    }
+    all_ids = list(id_to_record.keys())
+
+    index = MatchingEngineIndex(index_name=index_id)
+    existing_ids: set[str] = set()
+
+    # get_datapoints() limit is 300 IDs per call
+    batch_size = 300
+    for i in range(0, len(all_ids), batch_size):
+        batch_ids = all_ids[i : i + batch_size]
+        try:
+            datapoints = index.get_datapoints(datapoint_ids=batch_ids)
+            existing_ids.update(dp.datapoint_id for dp in datapoints)
+        except Exception as exc:  # noqa: BLE001
+            # If the check fails (e.g. index not yet populated), proceed with
+            # full embedding rather than silently dropping chunks.
+            logger.warning(
+                "idempotency_check_failed",
+                batch_start=i,
+                error=str(exc),
+            )
+
+    new_records = [r for dp_id, r in id_to_record.items() if dp_id not in existing_ids]
+
+    logger.info(
+        "idempotency_check",
+        total_chunks=len(chunk_records),
+        already_indexed=len(existing_ids),
+        new_chunks=len(new_records),
+    )
+
+    return new_records
 
 
 def _embed_chunks(chunks: list[str]) -> list[list[float]]:
