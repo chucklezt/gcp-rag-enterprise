@@ -58,6 +58,9 @@ Deployed Index ID: rag_embeddings_deployed
 - **Cloud Build** — CI/CD via triggers, not GitHub Actions — keeps everything GCP-native
 - **Terraform** — all infrastructure as code, modular structure under terraform/modules/
 - **Cloud Run URLs** — use stable `https://SERVICE-PROJECT_NUMBER.REGION.run.app` format, not hash-based URLs
+- **Firestore (rag-chunks database)** — stores chunk text keyed by Vector Search datapoint ID; chunker writes on ingest, query-api reads after match()
+- **Vector Search index lifecycle** — `prevent_destroy = true` on `google_vertex_ai_index.rag_index`; never destroy the index, it contains all embeddings and takes hours to rebuild
+- **Cloud Build machine type** — E2_MEDIUM (covered by 120 free build-minutes/day), not E2_HIGHCPU_8
 
 ### Temporary dev/demo exceptions (remove before production)
 - `rag-query-api` has `allUsers` invoker binding — replace with IAP
@@ -78,6 +81,8 @@ Secret names:       rag-[resource]-[field] e.g. rag-vector-search-index-id
 KMS key rings:      rag-keyring
 KMS keys:           rag-storage-key
 AR repository:      rag-docker
+Firestore DB:       rag-chunks
+Firestore coll:     chunks (doc ID = datapoint_id)
 Terraform modules:  snake_case
 Python files:       snake_case
 TS/JS files:        camelCase or kebab-case (Next.js convention)
@@ -145,8 +150,10 @@ terraform/
     ├── storage/          # GCS bucket + KMS key ring/key + Pub/Sub topic + GCS notification
     ├── vector-search/    # Vertex AI index + index endpoint + deployed index
     ├── cloud-run/        # Both Cloud Run services + Pub/Sub push subscription + IAM bindings
+    │                     # (includes chunker-sa + Pub/Sub SA → rag-chunker run.invoker bindings)
     └── security/         # Service accounts (chunker-sa, query-api-sa, cloudbuild-sa),
-                          # IAM bindings, Secret Manager, Artifact Registry, Budget
+                          # IAM bindings, Secret Manager, Artifact Registry, Budget,
+                          # Firestore API + rag-chunks database
 ```
 
 ### Module dependency graph
@@ -169,6 +176,7 @@ GCS upload → Pub/Sub (rag-ingest-trigger) → push subscription → Cloud Run 
   → Content-type dispatch (text, PDF, EPUB, DOCX, PPTX)
   → LangChain text splitter (500 tok / 50 overlap, tiktoken cl100k_base)
   → Vertex AI text-embedding-004 (768 dims, batch size 20)
+  → Firestore write (collection: chunks, doc ID = datapoint_id, fields: text, raw_id, object_name + metadata)
   → Vertex AI Vector Search index upsert (streaming update, deterministic SHA-256 IDs)
 ```
 
@@ -186,7 +194,8 @@ GCS upload → Pub/Sub (rag-ingest-trigger) → push subscription → Cloud Run 
 Next.js UI → Cloud Run rag-query-api (POST /query)
   → text-embedding-004 (embed question, RETRIEVAL_QUERY task type)
   → Vector Search private endpoint (match() via VPC-peered gRPC, top-5 ANN)
-  → Gemini 2.5 Flash (streaming generation with RAG system instruction)
+  → Firestore read (fetch chunk text + metadata by datapoint ID, parallel via ThreadPoolExecutor)
+  → Gemini 2.5 Flash (streaming generation with RAG system instruction, cites book/chapter)
   → SSE stream (event: token, event: metadata, event: done) → UI renders tokens live
 ```
 
@@ -222,7 +231,7 @@ Every Cloud Run request must emit a structured JSON log with these fields:
 }
 ```
 
-Chunker logs include: `service`, `bucket`, `object_name`, `content_type`, `chunk_count`, `embed_latency_ms`, `upsert_latency_ms`, `total_latency_ms`. Errors include `exception` field with full traceback.
+Chunker logs include: `service`, `bucket`, `object_name`, `content_type`, `chunk_count`, `embed_latency_ms`, `upsert_latency_ms`, `total_latency_ms`, plus `firestore_chunks_stored` event. Errors include `exception` field with full traceback.
 
 ---
 
@@ -233,6 +242,7 @@ Chunker logs include: `service`, `bucket`, `object_name`, `content_type`, `chunk
 - Tags with $COMMIT_SHA + latest
 - Deploys to Cloud Run sequentially: chunker → query-api → frontend
 - Uses `cloudbuild-sa` service account with least-privilege roles
+- Machine type: E2_MEDIUM (free tier), logging: CLOUD_LOGGING_ONLY
 
 ### Frontend cloudbuild.yaml (manual submit fallback)
 - Hardcoded project ID (rag-demo-491202) — $PROJECT_ID doesn't resolve in `gcloud builds submit`
@@ -247,6 +257,8 @@ Chunker logs include: `service`, `bucket`, `object_name`, `content_type`, `chunk
 - Do not use `local-exec` or `remote-exec` provisioners in Terraform
 - Do not store Terraform state locally — use GCS backend
 - Do not use `latest` as a container image tag in production resources
+- Do not destroy `google_vertex_ai_index.rag_index` — it has `prevent_destroy = true` and contains all vector embeddings
+- Do not use `terraform destroy` targeting vector-search resources — use gcloud commands + `terraform state rm` (see rag-cost-control.sh)
 - Do not add `--no-verify` to git commands
 - Do not skip `terraform plan` before `terraform apply`
 - Do not use $PROJECT_ID in cloudbuild.yaml for manual `gcloud builds submit` — it only resolves in trigger-based builds
@@ -256,10 +268,9 @@ Chunker logs include: `service`, `bucket`, `object_name`, `content_type`, `chunk
 ## Helpful Commands
 
 ```bash
-# Authenticate gcloud
+# Authenticate gcloud (quota project is set in providers.tf via user_project_override)
 gcloud auth login
 gcloud auth application-default login
-gcloud auth application-default set-quota-project rag-demo-491202
 
 # Set project
 gcloud config set project rag-demo-491202
@@ -285,4 +296,11 @@ gcloud builds submit --config=cloudbuild.yaml --project=rag-demo-491202 frontend
 
 # Frontend local dev
 cd frontend && npm install && npm run dev
+
+# Cost control (teardown/restore billable resources)
+./rag-cost-control.sh                  # status check
+./rag-cost-control.sh --teardown       # stop VS endpoint + VPC connector (~$73/mo savings)
+./rag-cost-control.sh --restore        # bring back VS endpoint + VPC connector (~30-40 min)
+./rag-cost-control.sh --full-teardown  # stop everything except data (~$79/mo savings)
+./rag-cost-control.sh --full-restore   # rebuild entire stack (~45-60 min)
 ```

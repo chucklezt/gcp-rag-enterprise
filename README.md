@@ -1,6 +1,6 @@
 # enterprise-rag-gcp
 
-**Production-grade Retrieval-Augmented Generation on Google Cloud Platform — aligned to the GCP Well-Architected Framework across all five pillars. Deployable at demo scale for ~$1.36/month.**
+**Production-grade Retrieval-Augmented Generation on Google Cloud Platform — aligned to the GCP Well-Architected Framework. Deployable at demo scale for ~$77/month running, or ~$0.12/month with the cost control script between sessions.**
 
 > Designed and built by [Chuck Tsocanos](https://chucktsocanos.com) — Technology Executive, AI Strategist, Cloud Transformation Leader.
 
@@ -8,39 +8,61 @@
 
 ## Overview
 
-This repository contains the full implementation of an enterprise RAG (Retrieval-Augmented Generation) system on GCP. It is designed to serve dual purposes:
+This repository contains the full implementation of an enterprise RAG (Retrieval-Augmented Generation) system on GCP. It serves two purposes:
 
 - **Portfolio artifact** — demonstrating enterprise-grade cloud AI architecture for VP-level and Fortune 100 client conversations
-- **GCP Professional Cloud Architect cert prep** — covering Vertex AI, Cloud Run, VPC, IAM, CMEK, Pub/Sub, Cloud Build, and more
+- **GCP Professional Cloud Architect cert prep** — covering Vertex AI, Cloud Run, VPC peering, Service Networking, IAM, CMEK, Pub/Sub, Cloud Build, Firestore, and more
 
-The system enables conversational question-answering over a document corpus (ebooks, technical docs, policy documents) using a fully GCP-native stack — with enterprise security controls, observability, and a CI/CD pipeline — at a cost that fits any POC budget.
+The system ingests technical books (EPUB, PDF, DOCX, PPTX), creates semantic embeddings using Google's `text-embedding-004`, stores them in Vertex AI Vector Search with chapter-aware metadata, and answers natural language questions by retrieving relevant context and generating streamed responses via Gemini 2.5 Flash — with book and chapter citations on every response.
 
 ---
 
 ## Architecture
 
-![Enterprise RAG on GCP Architecture](docs/architecture-preview.png)
+### Three Independent Flows
 
-> Interactive architecture diagram: [`docs/gcp-rag-architecture.html`](docs/gcp-rag-architecture.html)
-> Reference architecture document: [`docs/gcp-rag-reference-architecture.docx`](docs/gcp-rag-reference-architecture.docx)
+The system separates infrastructure, application deployment, and data processing into completely independent flows:
+
+**Infrastructure (Terraform, manual)** — Developer runs `terraform apply` locally. Manages 5 modules in dependency order: networking → storage → security → vector-search → cloud-run. No CI/CD involvement.
+
+**Application (Cloud Build, automated)** — `git push` to main triggers Cloud Build. Builds all three Docker images in parallel on E2_MEDIUM (free tier), tags with `$COMMIT_SHA`, pushes to Artifact Registry, deploys to Cloud Run. ~5-8 minutes end to end.
+
+**Data / AI pipeline (event-driven)** — Upload a document to GCS → `OBJECT_FINALIZE` → Pub/Sub push → OIDC-authenticated request to rag-chunker → extract chapters → chunk → embed → Firestore write → Vector Search upsert. Fully asynchronous.
 
 ### Stack
 
 | Layer | Service | Purpose |
 |---|---|---|
-| Frontend | Next.js on Vercel | Chat UI with SSE streaming |
-| Query API | Cloud Run (FastAPI) | RAG query pipeline, private VPC |
-| Ingestion | Cloud Run (LangChain) | Async chunking + embedding |
-| Embeddings | Vertex AI text-embedding-004 | 768-dim dense vectors |
-| Vector Store | Vertex AI Vector Search | ANN retrieval, <100ms p99 |
-| LLM | Gemini 2.5 Flash | Streaming generation |
-| Messaging | Pub/Sub | Event-driven ingestion trigger |
-| Storage | Cloud Storage (CMEK) | Raw document store |
-| Secrets | Secret Manager | Credential management |
-| Networking | VPC + VPC Service Controls | Private connectivity, no public IPs |
-| Observability | Cloud Logging, Monitoring, Trace | Structured logs, dashboards, tracing |
-| CI/CD | Cloud Build + Artifact Registry | GitOps deployment pipeline |
-| IaC | Terraform | All GCP resources provisioned as code |
+| Frontend | Cloud Run (Next.js) | Chat UI with SSE streaming, dark theme |
+| Query API | Cloud Run (FastAPI) | RAG query pipeline, private VPC access |
+| Ingestion | Cloud Run (LangChain) | Async chapter-aware chunking + embedding |
+| Embeddings | Vertex AI text-embedding-004 | 768-dim dense vectors, RETRIEVAL_DOCUMENT task |
+| Vector Store | Vertex AI Vector Search | DEDICATED_RESOURCES ANN, private VPC endpoint, ~14ms |
+| Chunk Text | Firestore (rag-chunks) | Parallel chunk text retrieval after ANN lookup |
+| LLM | Gemini 2.5 Flash | Streaming SSE generation with book/chapter citations |
+| Messaging | Pub/Sub | Event-driven ingestion trigger via OIDC push |
+| Storage | Cloud Storage (CMEK) | Raw document store, force_destroy=false |
+| Secrets | Secret Manager | Vector Search IDs, runtime credentials |
+| Networking | VPC + Service Networking | Private VPC peering to Vector Search, /16 range |
+| CI/CD | Cloud Build + Artifact Registry | GitOps pipeline, immutable $COMMIT_SHA tags |
+| IaC | Terraform | All GCP resources, 5 modules, prevent_destroy on index |
+
+### Query Pipeline (10 steps)
+
+| Step | Component | Latency |
+|---|---|---|
+| 1. User submits question | Browser → rag-frontend POST /query | — |
+| 2. Frontend proxies | rag-frontend → rag-query-api SSE stream | — |
+| 3. Embed question | text-embedding-004 (RETRIEVAL_QUERY task) | ~100ms |
+| 4. Vector returns | 768-dim float array | — |
+| 5. ANN lookup | Vector Search match() via private VPC gRPC | — |
+| 6. Top-5 returned | SHA-256 chunk IDs + distances + metadata | ~14ms |
+| 7. Fetch chunk text | Firestore parallel GET x5 (ThreadPoolExecutor) | ~10ms |
+| 8. Build prompt | system + [Chunk N] (Book, Chapter) + question (~1,500 tokens) | <1ms |
+| 9. Gemini streams | Token chunks → SSE event:token | ~2-4s |
+| 10. Browser renders | event:token / event:metadata / event:done | continuous |
+
+**Total end-to-end: ~6 seconds per query.**
 
 ---
 
@@ -48,40 +70,52 @@ The system enables conversational question-answering over a document corpus (ebo
 
 | Pillar | Implementation |
 |---|---|
-| **Security** | IAM least-privilege service accounts, CMEK on Cloud Storage, VPC Service Controls, Secret Manager, no default SA usage |
-| **Reliability** | Cloud Run scale-to-zero with max-instances cap, Pub/Sub retry with exponential backoff, health checks, multi-region GCS |
-| **Performance Efficiency** | Vertex AI Vector Search (ANN, <100ms p99), Gemini Flash streaming SSE, async ingestion pipeline |
-| **Cost Optimization** | Scale-to-zero compute, free tier maximization, budget alerts at $5/$10/$20, ~$1.36/month at demo scale |
-| **Operational Excellence** | Structured JSON logging, OpenTelemetry tracing, Cloud Monitoring dashboard, Cloud Build GitOps pipeline |
+| **Security** | IAM least-privilege service accounts (chunker-sa, query-api-sa, cloudbuild-sa), CMEK on Cloud Storage (90-day key rotation), Secret Manager for all credentials, OIDC auth on Pub/Sub push, dedicated Cloud Build SA |
+| **Reliability** | Cloud Run scale-to-zero with max-instances cap, Pub/Sub retry with exponential backoff, deterministic SHA-256 chunk IDs (idempotent re-ingestion), prevent_destroy on Vector Search index |
+| **Performance Efficiency** | Vertex AI Vector Search DEDICATED_RESOURCES (~14ms ANN latency), Firestore parallel chunk retrieval (~10ms), Gemini Flash SSE streaming (first token ~2s), text-embedding-004 batched at 20 chunks/call |
+| **Cost Optimization** | Scale-to-zero Cloud Run, Firestore free tier (50K reads/day), cost control script (4 modes, reduces from ~$77/mo to ~$0.12/mo between sessions), budget alerts at $5/$10/$20, E2_MEDIUM Cloud Build (120 free min/day) |
+| **Operational Excellence** | Structured JSON logging (event, latency_ms, chunk_count, book_title), immutable $COMMIT_SHA image tags, 5-module Terraform with dependency outputs, cost control script with status/teardown/restore/full-restore modes |
 
 ---
 
 ## Cost Model
 
-### One-Time Ingestion (5,000 pages)
+### Ingestion Cost (one-time per document)
 
 | Item | Cost |
 |---|---|
-| text-embedding-004 (2.5M tokens) | $0.00–$0.25 |
-| Cloud Storage | $0.00 (free tier) |
-| Cloud Run chunker | $0.00 (free tier) |
-| **Total** | **~$0.25** |
+| text-embedding-004 (~500K chars per book) | ~$0.005/book |
+| Cloud Storage, Pub/Sub, Cloud Run chunker | $0.00 (free tier) |
+| Firestore writes (~600 chunks/book) | $0.00 (free tier) |
+| **50-book corpus total** | **~$0.25** |
 
-### Monthly Operating Cost (demo scale)
+> Note: Re-ingesting the same documents re-charges embedding. Chunk IDs are deterministic so Vector Search and Firestore writes are idempotent, but the embedding API call fires regardless. A future optimization is to skip embedding for chunk IDs already present in the index.
 
-| Service | Monthly Cost |
-|---|---|
-| Cloud Run × 2 (scale-to-zero) | $0.00 |
-| Vertex AI Vector Search | ~$0.10 |
-| Gemini 2.5 Flash (1,000 queries) | ~$1.20 |
-| Cloud Storage | $0.00 |
-| Pub/Sub | $0.00 |
-| Secret Manager | ~$0.06 |
-| Logging / Monitoring / Trace | $0.00 |
-| Artifact Registry | $0.00 |
-| **Total** | **~$1.36/mo** |
+### Monthly Operating Cost
 
-Per-query cost: ~$0.0012 (0.12 cents) at 1,500 input + 300 output tokens via Gemini Flash.
+| Mode | Monthly | Notes |
+|---|---|---|
+| **Running (endpoint live)** | **~$77/mo** | Vector Search DEDICATED (~$65) + VPC Connector (~$8) + NAT (~$4) |
+| **Teardown** (index deployed, no endpoint) | ~$4/mo | NAT only |
+| **Full teardown** (data only) | **~$0.12/mo** | GCS + Firestore + Artifact Registry at rest |
+
+Queries themselves cost ~$0.0004 each (embedding + Gemini Flash at demo volume) — negligible.
+
+### Cost Control Script
+
+```bash
+./rag-cost-control.sh                    # Check what is running and billing
+./rag-cost-control.sh --teardown         # Stop VS endpoint + VPC connector (~$73/mo savings, 35-40 min to restore)
+./rag-cost-control.sh --restore          # Bring back serving infrastructure
+./rag-cost-control.sh --full-teardown    # Stop everything except data (~$79/mo savings, 55-60 min to restore)
+./rag-cost-control.sh --full-restore     # Rebuild entire stack from scratch
+```
+
+**What always persists regardless of teardown mode:**
+- GCS bucket + documents (`force_destroy=false`)
+- Vector Search index + vectors (`prevent_destroy=true`)
+- Firestore chunk text
+- Artifact Registry images (all `$COMMIT_SHA` tags)
 
 ---
 
@@ -89,34 +123,40 @@ Per-query cost: ~$0.0012 (0.12 cents) at 1,500 input + 300 output tokens via Gem
 
 ```
 enterprise-rag-gcp/
-├── terraform/                  # All GCP infrastructure as code
+├── terraform/
 │   ├── main.tf
 │   ├── variables.tf
 │   ├── outputs.tf
+│   ├── providers.tf                    # user_project_override=true for billing budget
+│   ├── terraform.tfvars                # gitignored — project ID, billing account, image SHAs
 │   └── modules/
-│       ├── networking/         # VPC, subnets, NAT, VPC SC
-│       ├── storage/            # GCS bucket, KMS/CMEK
-│       ├── vector-search/      # Vertex AI index + endpoint
-│       ├── cloud-run/          # Chunker + Query API services
-│       └── security/           # IAM, Secret Manager, Artifact Registry
+│       ├── networking/                 # VPC, subnet, NAT, router, VPC connector, Service Networking peering
+│       ├── storage/                    # GCS bucket (CMEK, force_destroy=false), KMS, Pub/Sub topic
+│       ├── security/                   # 3 service accounts, IAM, Firestore DB, Secret Manager, billing budget
+│       ├── vector-search/              # VS index (prevent_destroy=true), endpoint, deployed index (DEDICATED)
+│       └── cloud-run/                  # rag-chunker, rag-query-api, Pub/Sub subscription, IAM bindings
 ├── services/
-│   ├── chunker/                # Python ingestion service (LangChain)
-│   │   ├── main.py
+│   ├── chunker/                        # FastAPI + LangChain ingestion service
+│   │   ├── main.py                     # Pub/Sub push handler, SUPPORTED_CONTENT_TYPES
+│   │   ├── chunker.py                  # extract_epub(), embed_chunks(), Firestore writes
 │   │   ├── requirements.txt
 │   │   └── Dockerfile
-│   └── query-api/              # Python query service (FastAPI)
-│       ├── main.py
+│   └── query-api/                      # FastAPI query service with SSE streaming
+│       ├── main.py                     # CORS middleware, /query SSE endpoint
+│       ├── retriever.py                # match() via private gRPC, Firestore parallel fetch
+│       ├── generator.py                # build_prompt(), Gemini streaming
+│       ├── models.py                   # Pydantic schemas
 │       ├── requirements.txt
 │       └── Dockerfile
-├── frontend/                   # Next.js chat UI
+├── frontend/                           # Next.js 14, TypeScript, Tailwind, dark theme
 │   ├── app/
 │   ├── components/
+│   ├── lib/
+│   │   └── sse.ts                      # fetch + ReadableStream SSE client
 │   └── package.json
-├── docs/                       # Architecture diagrams and reference docs
-│   ├── gcp-rag-architecture.html
-│   └── gcp-rag-reference-architecture.docx
-├── cloudbuild.yaml             # CI/CD pipeline definition
-├── CLAUDE.md                   # Claude Code project instructions
+├── cloudbuild.yaml                     # CI/CD — E2_MEDIUM, parallel builds, $COMMIT_SHA tags
+├── rag-cost-control.sh                 # Cost management — teardown/restore/status (4 modes)
+├── CLAUDE.md                           # Claude Code project instructions
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -127,11 +167,11 @@ enterprise-rag-gcp/
 ## Prerequisites
 
 - GCP project with billing enabled
-- `gcloud` CLI authenticated (`gcloud auth login`)
+- `gcloud` CLI authenticated (`gcloud auth application-default login`)
 - Terraform >= 1.5
-- Node.js >= 18 (for Next.js frontend)
-- Python >= 3.11 (for Cloud Run services)
-- Docker (for local container builds)
+- Node.js >= 18 (frontend local dev only — Cloud Build handles container builds)
+- Python >= 3.11 (service local dev only)
+- Docker is **not required** — all container builds run remotely on Cloud Build
 
 ---
 
@@ -140,11 +180,11 @@ enterprise-rag-gcp/
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/enterprise-rag-gcp.git
-cd enterprise-rag-gcp
+git clone https://github.com/chucklezt/gcp-rag-enterprise.git
+cd gcp-rag-enterprise
 ```
 
-### 2. Configure your GCP project
+### 2. Enable required APIs
 
 ```bash
 gcloud config set project YOUR_PROJECT_ID
@@ -156,38 +196,141 @@ gcloud services enable \
   cloudkms.googleapis.com \
   artifactregistry.googleapis.com \
   pubsub.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com \
+  firestore.googleapis.com \
+  servicenetworking.googleapis.com \
+  billingbudgets.googleapis.com
 ```
 
-### 3. Provision infrastructure
+### 3. Set Application Default Credentials quota project
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project YOUR_PROJECT_ID
+```
+
+> Alternatively, add `user_project_override = true` and `billing_project = var.project_id` to the Google provider in `terraform/providers.tf` — this is already done in this repo and eliminates the need to run the above command each session.
+
+### 4. Configure terraform.tfvars
 
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your project ID and settings
+```
 
+Edit `terraform.tfvars`:
+
+```hcl
+project_id         = "your-project-id"
+region             = "us-central1"
+environment        = "dev"
+vpc_cidr           = "10.10.0.0/24"
+vpc_connector_cidr = "10.10.1.0/28"
+project_number     = "YOUR_PROJECT_NUMBER"   # gcloud projects describe YOUR_PROJECT_ID --format='value(projectNumber)'
+billing_account_id = "XXXXXX-XXXXXX-XXXXXX"  # gcloud billing projects describe YOUR_PROJECT_ID --format='value(billingAccountName)' | sed 's/billingAccounts\///'
+budget_alert_email = "you@example.com"
+```
+
+### 5. Provision infrastructure (5 modules)
+
+```bash
 terraform init
-terraform plan -out=tfplan
-terraform apply tfplan
+terraform plan
+terraform apply
 ```
 
-### 4. Ingest documents
+Modules provision in dependency order. The Vector Search index endpoint takes **20-40 minutes** — this is normal. Do not cancel.
+
+After apply, store the Vector Search IDs in Secret Manager:
 
 ```bash
-# Upload documents to the GCS bucket
-gsutil -m cp ./your-documents/*.pdf gs://YOUR_BUCKET_NAME/
-
-# Pub/Sub automatically triggers the ingestion pipeline
-# Monitor progress in Cloud Logging
+echo -n "YOUR_INDEX_ID" | gcloud secrets versions add rag-vector-search-index-id --data-file=-
+echo -n "YOUR_ENDPOINT_ID" | gcloud secrets versions add rag-vector-search-index-endpoint-id --data-file=-
 ```
 
-### 5. Deploy the frontend
+### 6. Build and push container images
+
+Images are built automatically on every `git push` via Cloud Build. For the initial push before the trigger is configured, build manually:
 
 ```bash
-cd frontend
-npm install
-vercel deploy
+# Build all three services
+gcloud builds submit --config=cloudbuild.yaml
 ```
+
+Update `terraform.tfvars` with the resulting image SHAs, then `terraform apply` again to deploy.
+
+### 7. Configure Cloud Build trigger
+
+In the GCP console: **Cloud Build → Triggers → Create Trigger**
+
+- Source: GitHub (`chucklezt/gcp-rag-enterprise`), branch `^main$`
+- Config: `cloudbuild.yaml`
+- Service account: `cloudbuild-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com`
+- Machine type: E2_MEDIUM (free tier — do **not** use E2_HIGHCPU_8)
+
+### 8. Ingest documents
+
+```bash
+# Single document
+gsutil cp your-document.epub gs://YOUR_PROJECT_ID-rag-documents/
+
+# Bulk upload (parallel)
+gsutil -m cp ./your-documents/*.epub gs://YOUR_PROJECT_ID-rag-documents/
+```
+
+Monitor ingestion progress:
+
+```bash
+gcloud logging read \
+  "resource.type=cloud_run_revision AND resource.labels.service_name=rag-chunker" \
+  --project=YOUR_PROJECT_ID \
+  --limit=20 \
+  --format=json \
+  --freshness=5m \
+  | python3 -c "
+import json,sys
+logs=json.load(sys.stdin)
+for l in reversed(logs):
+    p=l.get('jsonPayload',{})
+    h=l.get('httpRequest',{})
+    t=l.get('timestamp','')[:19]
+    if h: print(t,'HTTP',h.get('status'))
+    if p: print(t,json.dumps(p))
+" 2>/dev/null
+```
+
+A successful ingestion looks like:
+```
+HTTP 200
+{"event": "epub_extracted", "book_title": "...", "chapters": 101, "total_chunks": 613}
+{"event": "document_processed", "chunk_count": 613, "embed_latency_ms": 14716, "total_latency_ms": 21669}
+```
+
+---
+
+## Ingestion Pipeline Detail
+
+The chunker handles EPUB, PDF, DOCX, and PPTX. EPUB ingestion is chapter-aware:
+
+1. `ebooklib` iterates chapters in spine order
+2. `BeautifulSoup` extracts clean text per chapter
+3. `RecursiveCharacterTextSplitter` chunks each chapter independently (500 tokens, 50 overlap)
+4. `text-embedding-004` embeds in batches of 20 chunks (~10K tokens/call, RETRIEVAL_DOCUMENT task)
+5. Firestore batch write — `chunks/{SHA256_id}` with `text`, `book_title`, `chapter_title`, `chapter_index`
+6. Vector Search `upsert_datapoints()` with metadata restricts
+
+**Chunk IDs are deterministic** — `SHA-256({object_name}::ch{n}::chunk_{i})`. Re-uploading the same document is safe: Vector Search upserts overwrite identically and Firestore writes are idempotent. No duplicates, no cleanup required.
+
+---
+
+## Supported Document Formats
+
+| Format | Handler | Metadata Restricts |
+|---|---|---|
+| EPUB | ebooklib + BeautifulSoup | book_title, chapter_title, chapter_index |
+| PDF | pypdf | page_number |
+| DOCX | python-docx | chapter_title (from heading style) |
+| PPTX | python-pptx | slide_number |
 
 ---
 
@@ -203,46 +346,30 @@ uvicorn main:app --reload --port 8080
 
 # Frontend
 cd frontend
-npm run dev
+npm install
+npm run dev   # hot reload — no restart needed for code changes
 ```
 
 ### Running with Claude Code
 
-This project is designed to be built and iterated with [Claude Code](https://claude.ai/code). See [`CLAUDE.md`](CLAUDE.md) for project-specific instructions that Claude Code reads automatically.
+This project was built with [Claude Code](https://claude.ai/code). See [`CLAUDE.md`](CLAUDE.md) for project-specific instructions.
 
 ```bash
-# Install Claude Code
 npm install -g @anthropic-ai/claude-code
-
-# Start a session in the repo root
 claude
 ```
 
 ---
 
-## Deployment Pipeline
+## Known Operational Notes
 
-Every push to `main` triggers the Cloud Build pipeline defined in `cloudbuild.yaml`:
+**Terraform state drift** — Every manual `gcloud` operation that creates or deletes a Terraform-managed resource causes state drift. Use `terraform import` after manual creates, `terraform state rm` after manual deletes.
 
-```
-git push → Cloud Build trigger
-  → Build container images
-  → Push to Artifact Registry
-  → Vulnerability scan
-  → Deploy to Cloud Run
-  → Terraform plan (on PR)
-```
+**Vector Search deploy timing** — The index endpoint takes 20-40 minutes to deploy. GCP cleanup after undeploy takes 5-15 minutes. Always use the full resource path for `--index` in `gcloud ai index-endpoints deploy-index` — short numeric IDs return NOT_FOUND.
 
----
+**Pub/Sub IAM chain** — Both `chunker-sa` and the Pub/Sub service agent (`service-PROJECT_NUMBER@gcp-sa-pubsub.iam.gserviceaccount.com`) need `roles/run.invoker` on rag-chunker. Pub/Sub mints the OIDC token as `chunker-sa`, so Cloud Run checks that email, not the service agent.
 
-## Security Notes
-
-- **No secrets in code** — all credentials managed via Secret Manager
-- **No public IPs on backend** — Cloud Run query API is VPC-internal only
-- **CMEK encryption** — Cloud Storage bucket encrypted with customer-managed KMS key
-- **Dedicated service accounts** — one per Cloud Run service, least-privilege IAM
-- **VPC Service Controls** — perimeter around Vertex AI and Cloud Storage
-- See [Security Pillar documentation](docs/gcp-rag-reference-architecture.docx) for full detail
+**Ingestion re-embedding cost** — Re-uploading a document re-charges the embedding API even though Vector Search and Firestore writes are idempotent. At ~$0.005/book this is negligible but worth knowing.
 
 ---
 
@@ -254,25 +381,54 @@ The demo architecture scales to production with configuration changes only — n
 |---|---|---|
 | Cloud Run min-instances | 0 | 2 |
 | Cloud Run max-instances | 3 | 50 |
+| Vector Search machine | e2-standard-2, 1 replica | n1-standard-16, 3 replicas |
 | Vector Search shard size | SMALL | MEDIUM / LARGE |
 | GCS bucket | Regional | Multi-region |
-| Gemini model | Flash | Flash or Pro depending on quality needs |
+| Frontend access | allUsers (temp) | IAP + HTTPS Load Balancer |
+| API access | allUsers (temp) | Apigee + IAP |
+| Security perimeter | VPC peering only | VPC Service Controls + SCC Premium |
+| CI/CD | Shared Cloud Build pool | Private Cloud Build pool + SLSA |
+
+**Estimated production cost: ~$1,710/mo** (dominated by Apigee ~$600 and Vector Search HA ~$800). Security controls alone add ~$218/mo.
+
+---
+
+## Roadmap
+
+- [ ] IAP (Identity-Aware Proxy) — replace allUsers before sharing URLs publicly
+- [ ] Restrict CORS — change `allow_origins=["*"]` to frontend URL
+- [ ] Skip re-embedding for existing chunk IDs (check Vector Search before calling embedding API)
+- [ ] POC Terraform workspace — AUTOMATIC_RESOURCES, no VPC peering, ~$2/mo
+- [ ] Multi-turn conversations — maintain query history across turns
+- [ ] Apigee integration — enterprise API management
+- [ ] VPC Service Controls — data exfiltration perimeter
+- [ ] SLSA supply chain security — signed container provenance
+
+---
+
+## Security Notes
+
+- No secrets in code — all credentials managed via Secret Manager
+- No public IPs on backend services — query API and chunker are internal ingress only (allUsers binding is temporary dev exception, see Roadmap)
+- CMEK encryption on Cloud Storage with 90-day key rotation
+- Dedicated service accounts — one per Cloud Run service, least-privilege IAM only
+- Private VPC peering to Vector Search — traffic never traverses the public internet
+- VPC Service Controls — planned (see Roadmap)
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
 ## Author
 
-**Chuck Tsocanos**
+**Chuck Tsocanos**  
 Technology Executive · AI Strategist · Cloud Transformation Leader
 
 - Website: [chucktsocanos.com](https://chucktsocanos.com)
 - LinkedIn: [linkedin.com/in/chucktsocanos](https://linkedin.com/in/chucktsocanos)
 
-*Design prompted by Chuck Tsocanos using Claude.*
-# Enterprise RAG on GCP
+*Built with Claude and Claude Code.*
