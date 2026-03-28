@@ -10,7 +10,7 @@
 
 This repository contains the full implementation of an enterprise RAG (Retrieval-Augmented Generation) system on GCP. It serves two purposes:
 
-- **Portfolio artifact** — demonstrating enterprise-grade cloud AI architecture for VP-level and Fortune 100 client conversations
+- **Portfolio artifact** — demonstrating enterprise-grade cloud AI architecture for client conversations
 - **GCP Professional Cloud Architect cert prep** — covering Vertex AI, Cloud Run, VPC peering, Service Networking, IAM, CMEK, Pub/Sub, Cloud Build, Firestore, and more
 
 The system ingests technical books (EPUB, PDF, DOCX, PPTX), creates semantic embeddings using Google's `text-embedding-004`, stores them in Vertex AI Vector Search with chapter-aware metadata, and answers natural language questions by retrieving relevant context and generating streamed responses via Gemini 2.5 Flash — with book and chapter citations on every response.
@@ -429,6 +429,6 @@ MIT — see [LICENSE](LICENSE) for details.
 Technology Executive · AI Strategist · Cloud Transformation Leader
 
 - Website: [chucktsocanos.com](https://chucktsocanos.com)
-- LinkedIn: [linkedin.com/in/chucktsocanos](https://linkedin.com/in/chucktsocanos)
+- LinkedIn: [linkedin.com/in/charlestsocanos](https://linkedin.com/in/charlestsocanos)
 
 *Built with Claude and Claude Code.*
