@@ -225,6 +225,9 @@ if [[ "${1:-}" == "--full-teardown" ]]; then
   terraform state rm \
     module.networking.google_vpc_access_connector.rag_connector \
     2>/dev/null || true
+  terraform state rm \
+    module.vector_search.google_vertex_ai_index.rag_index \
+    2>/dev/null || true
 
   check "Destroying Cloud Run, NAT, and router via Terraform..."
   terraform destroy \
@@ -287,15 +290,39 @@ if [[ "${1:-}" == "--full-restore" ]]; then
   read -r -p "Proceed? (yes/no): " CONFIRM
   if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
   cd "$TERRAFORM_DIR"
+  INDEX_RESOURCE_ID="projects/$PROJECT/locations/$REGION/indexes/5187401301847179264"
+  check "Re-importing Vector Search index into Terraform state..."
+  if ! terraform state show module.vector_search.google_vertex_ai_index.rag_index &>/dev/null; then
+    terraform import \
+      module.vector_search.google_vertex_ai_index.rag_index \
+      "$INDEX_RESOURCE_ID"
+  else
+    ok "Index already in Terraform state — skipping import"
+  fi
   check "Step 1/3: Rebuilding networking and Cloud Run..."
   terraform apply \
     -target=module.networking \
     -target=module.cloud_run \
     -auto-approve
   check "Step 2/3: Recreating Vector Search endpoint..."
-  terraform apply \
+  if ! terraform apply \
     -target=module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
-    -auto-approve
+    -auto-approve; then
+    warn "Terraform apply failed — checking if endpoint was created in GCP anyway..."
+    GCP_ENDPOINT_ID=$(gcloud ai index-endpoints list \
+      --region="$REGION" --project="$PROJECT" \
+      --format="value(name)" 2>/dev/null | head -1 || echo "")
+    if [ -n "$GCP_ENDPOINT_ID" ]; then
+      check "Endpoint exists in GCP but not in state — importing..."
+      terraform import \
+        module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
+        "$GCP_ENDPOINT_ID"
+      ok "Endpoint imported successfully"
+    else
+      echo -e "${RED}Endpoint was not created in GCP. Re-run --full-restore to retry.${NC}"
+      exit 1
+    fi
+  fi
   ENDPOINT_ID=$(terraform output -raw vector_search_endpoint_name 2>/dev/null || echo "")
   INDEX_ID=$(terraform output -raw vector_search_index_id 2>/dev/null || echo "")
   check "Step 3/3: Deploying index (20-40 min)..."
