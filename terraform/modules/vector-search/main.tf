@@ -28,6 +28,7 @@ resource "google_vertex_ai_index" "rag_index" {
   # Prevent accidental destruction via terraform destroy or target changes.
   lifecycle {
     prevent_destroy = true
+    ignore_changes  = [labels, terraform_labels, metadata]
   }
 
   labels = var.labels
