@@ -8,6 +8,9 @@
 #   ./rag-cost-control.sh --restore        # bring back VS endpoint + VPC connector
 #   ./rag-cost-control.sh --full-teardown  # stop everything except GCS bucket + VS index (~$79/mo savings)
 #   ./rag-cost-control.sh --full-restore   # rebuild entire stack from scratch (~45-60 min)
+#   ./rag-cost-control.sh --stop-services  # delete all Cloud Run services (no endpoints accessible)
+#   ./rag-cost-control.sh --deep-teardown  # destroy all infra, keep VS index + GCS bucket
+#   ./rag-cost-control.sh --bare-project   # destroy ALL resources, leave only the empty GCP project
 
 set -euo pipefail
 
@@ -352,14 +355,278 @@ if [[ "${1:-}" == "--full-restore" ]]; then
   echo -e "${GREEN}Full restore complete. Ready once index deploys (~20-40 min).${NC}"
 fi
 
+if [[ "${1:-}" == "--stop-services" ]]; then
+  echo -e "${RED}STOP SERVICES MODE${NC}"
+  echo "Deletes:  All Cloud Run services (chunker, query-api, frontend)"
+  echo "Keeps:    All infrastructure (VS endpoint, VPC, networking, storage)"
+  echo "Effect:   No endpoints accessible, no ingest processing"
+  echo "Restore:  Redeploy via Cloud Build trigger or gcloud builds submit"
+  echo ""
+  read -r -p "Proceed? (yes/no): " CONFIRM
+  if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
+
+  SERVICES=$(gcloud run services list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(metadata.name)" 2>/dev/null || echo "")
+
+  if [ -z "$SERVICES" ]; then
+    ok "No Cloud Run services found"
+  else
+    while read -r svc; do
+      check "Deleting Cloud Run service: $svc..."
+      gcloud run services delete "$svc" \
+        --region="$REGION" --project="$PROJECT" --quiet || true
+    done <<< "$SERVICES"
+  fi
+
+  check "Removing Cloud Run resources from Terraform state..."
+  cd "$TERRAFORM_DIR"
+  terraform state rm module.cloud_run 2>/dev/null || true
+
+  echo ""
+  echo -e "${GREEN}All services stopped. No endpoints are accessible.${NC}"
+  echo "Redeploy via Cloud Build trigger or gcloud builds submit."
+fi
+
+if [[ "${1:-}" == "--deep-teardown" ]]; then
+  echo -e "${RED}DEEP TEARDOWN MODE${NC}"
+  echo "Destroys: All infrastructure — services, networking, IAM, secrets, Firestore, AR images"
+  echo "Keeps:    Vector Search index (embeddings), GCS bucket (documents), KMS key (CMEK)"
+  echo "Residual: ~\$0.12/mo (KMS + storage)"
+  echo "Restore:  Full terraform apply + Cloud Build deploy"
+  echo ""
+  read -r -p "Proceed? (yes/no): " CONFIRM
+  if [ "$CONFIRM" != "yes" ]; then echo "Aborted."; exit 0; fi
+
+  # --- 1. Cloud Run services (includes frontend which is not in Terraform) ---
+  check "Deleting all Cloud Run services..."
+  SERVICES=$(gcloud run services list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(metadata.name)" 2>/dev/null || echo "")
+  if [ -n "$SERVICES" ]; then
+    while read -r svc; do
+      echo "    Deleting $svc..."
+      gcloud run services delete "$svc" \
+        --region="$REGION" --project="$PROJECT" --quiet || true
+    done <<< "$SERVICES"
+  else
+    ok "No Cloud Run services found"
+  fi
+
+  # --- 2. Vector Search endpoint (keep the index, destroy endpoint + deploy) ---
+  ENDPOINT_ID=$(gcloud ai index-endpoints list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(name)" 2>/dev/null | head -1 || echo "")
+  if [ -n "$ENDPOINT_ID" ]; then
+    check "Undeploying index from endpoint..."
+    gcloud ai index-endpoints undeploy-index "$ENDPOINT_ID" \
+      --deployed-index-id=rag_embeddings_deployed \
+      --region="$REGION" --project="$PROJECT" || true
+    check "Deleting index endpoint..."
+    gcloud ai index-endpoints delete "$ENDPOINT_ID" \
+      --region="$REGION" --project="$PROJECT" --quiet || true
+  else
+    ok "No index endpoint found"
+  fi
+
+  # --- 3. VPC connector ---
+  check "Deleting VPC connector..."
+  gcloud compute networks vpc-access connectors delete rag-connector-dev \
+    --region="$REGION" --project="$PROJECT" --quiet 2>/dev/null || true
+
+  # --- 4. Firestore database ---
+  check "Deleting Firestore database (rag-chunks)..."
+  gcloud firestore databases delete --database=rag-chunks \
+    --project="$PROJECT" --quiet 2>/dev/null || true
+
+  # --- 5. Artifact Registry images ---
+  check "Deleting Artifact Registry images..."
+  AR_IMAGES=$(gcloud artifacts docker images list \
+    "us-central1-docker.pkg.dev/${PROJECT}/rag-docker" \
+    --format="value(IMAGE)" --include-tags 2>/dev/null || echo "")
+  if [ -n "$AR_IMAGES" ]; then
+    while read -r img; do
+      gcloud artifacts docker images delete "$img" \
+        --delete-tags --quiet 2>/dev/null || true
+    done <<< "$AR_IMAGES"
+  fi
+
+  # --- 6. Remove protected/preserved resources from Terraform state ---
+  check "Cleaning Terraform state of protected and preserved resources..."
+  cd "$TERRAFORM_DIR"
+  for resource in \
+    module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
+    module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
+    module.vector_search.google_vertex_ai_index.rag_index \
+    module.networking.google_vpc_access_connector.rag_connector \
+    module.storage.google_kms_crypto_key.rag_storage_key \
+    module.storage.google_kms_key_ring.rag_keyring \
+    module.storage.google_kms_crypto_key_iam_member.gcs_cmek \
+    module.storage.google_storage_bucket.rag_documents \
+    module.storage.google_storage_notification.ingest_notification \
+    module.storage.google_pubsub_topic_iam_member.gcs_pubsub_publisher; do
+    terraform state rm "$resource" 2>/dev/null || true
+  done
+
+  # --- 7. Destroy everything remaining via Terraform ---
+  check "Destroying all remaining infrastructure via Terraform..."
+  terraform destroy -auto-approve || true
+
+  echo ""
+  echo -e "${GREEN}Deep teardown complete.${NC}"
+  echo ""
+  echo "Preserved:"
+  echo "  - Vector Search index (all embeddings intact)"
+  echo "  - GCS bucket gs://${PROJECT}-rag-documents (all documents intact)"
+  echo "  - KMS key ring + key (required for bucket CMEK encryption)"
+  echo ""
+  echo "To rebuild: terraform apply + redeploy services via Cloud Build"
+fi
+
+if [[ "${1:-}" == "--bare-project" ]]; then
+  echo -e "${RED}=========================================${NC}"
+  echo -e "${RED}  BARE PROJECT MODE — IRREVERSIBLE${NC}"
+  echo -e "${RED}=========================================${NC}"
+  echo ""
+  echo "Destroys: ALL resources — services, infrastructure, data, everything"
+  echo "Keeps:    Only the empty GCP project and billing account"
+  echo ""
+  echo -e "${RED}All embeddings, documents, and Firestore data will be permanently lost.${NC}"
+  echo ""
+  read -r -p "Type 'DESTROY EVERYTHING' to confirm: " CONFIRM
+  if [ "$CONFIRM" != "DESTROY EVERYTHING" ]; then echo "Aborted."; exit 0; fi
+
+  # --- 1. Cloud Run services (includes frontend which is not in Terraform) ---
+  check "Deleting all Cloud Run services..."
+  SERVICES=$(gcloud run services list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(metadata.name)" 2>/dev/null || echo "")
+  if [ -n "$SERVICES" ]; then
+    while read -r svc; do
+      echo "    Deleting $svc..."
+      gcloud run services delete "$svc" \
+        --region="$REGION" --project="$PROJECT" --quiet || true
+    done <<< "$SERVICES"
+  else
+    ok "No Cloud Run services found"
+  fi
+
+  # --- 2. Vector Search (prevent_destroy — must use gcloud) ---
+  ENDPOINT_ID=$(gcloud ai index-endpoints list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(name)" 2>/dev/null | head -1 || echo "")
+  if [ -n "$ENDPOINT_ID" ]; then
+    check "Undeploying index from endpoint..."
+    gcloud ai index-endpoints undeploy-index "$ENDPOINT_ID" \
+      --deployed-index-id=rag_embeddings_deployed \
+      --region="$REGION" --project="$PROJECT" || true
+    check "Deleting index endpoint..."
+    gcloud ai index-endpoints delete "$ENDPOINT_ID" \
+      --region="$REGION" --project="$PROJECT" --quiet || true
+  else
+    ok "No index endpoint found"
+  fi
+
+  check "Deleting Vector Search index (irreversible — all embeddings lost)..."
+  INDEX_IDS=$(gcloud ai indexes list \
+    --region="$REGION" --project="$PROJECT" \
+    --format="value(name)" 2>/dev/null || echo "")
+  if [ -n "$INDEX_IDS" ]; then
+    while read -r idx; do
+      echo "    Deleting $idx..."
+      gcloud ai indexes delete "$idx" \
+        --region="$REGION" --project="$PROJECT" --quiet || true
+    done <<< "$INDEX_IDS"
+  else
+    ok "No indexes found"
+  fi
+
+  # --- 3. VPC connector (gcloud — already removed by --teardown pattern) ---
+  check "Deleting VPC connector..."
+  gcloud compute networks vpc-access connectors delete rag-connector-dev \
+    --region="$REGION" --project="$PROJECT" --quiet 2>/dev/null || true
+
+  # --- 4. GCS bucket contents ---
+  check "Emptying GCS bucket (all versions)..."
+  gsutil -m rm -ra "gs://${PROJECT}-rag-documents/**" 2>/dev/null || true
+
+  # --- 5. KMS key versions (minimum 24-hour destruction delay) ---
+  check "Scheduling KMS key versions for destruction..."
+  KEY_VERSIONS=$(gcloud kms keys versions list \
+    --key=rag-storage-key --keyring=rag-keyring \
+    --location="$REGION" --project="$PROJECT" \
+    --filter="state=ENABLED OR state=DISABLED" \
+    --format="value(name)" 2>/dev/null || echo "")
+  if [ -n "$KEY_VERSIONS" ]; then
+    while read -r ver; do
+      gcloud kms keys versions destroy "$ver" --project="$PROJECT" --quiet 2>/dev/null || true
+    done <<< "$KEY_VERSIONS"
+    warn "KMS key versions scheduled — destroyed after 24-hour wait"
+  else
+    ok "No active KMS key versions"
+  fi
+
+  # --- 6. Firestore database ---
+  check "Deleting Firestore database (rag-chunks)..."
+  gcloud firestore databases delete --database=rag-chunks \
+    --project="$PROJECT" --quiet 2>/dev/null || true
+
+  # --- 7. Artifact Registry images ---
+  check "Deleting Artifact Registry images..."
+  AR_IMAGES=$(gcloud artifacts docker images list \
+    "us-central1-docker.pkg.dev/${PROJECT}/rag-docker" \
+    --format="value(IMAGE)" --include-tags 2>/dev/null || echo "")
+  if [ -n "$AR_IMAGES" ]; then
+    while read -r img; do
+      gcloud artifacts docker images delete "$img" \
+        --delete-tags --quiet 2>/dev/null || true
+    done <<< "$AR_IMAGES"
+  fi
+
+  # --- 8. Remove prevent_destroy resources from Terraform state ---
+  check "Cleaning Terraform state of protected resources..."
+  cd "$TERRAFORM_DIR"
+  for resource in \
+    module.vector_search.google_vertex_ai_index_endpoint_deployed_index.rag_deployed_index \
+    module.vector_search.google_vertex_ai_index_endpoint.rag_endpoint \
+    module.vector_search.google_vertex_ai_index.rag_index \
+    module.networking.google_vpc_access_connector.rag_connector \
+    module.storage.google_kms_crypto_key.rag_storage_key; do
+    terraform state rm "$resource" 2>/dev/null || true
+  done
+
+  # --- 9. Destroy everything remaining via Terraform ---
+  check "Destroying all remaining resources via Terraform..."
+  terraform destroy -auto-approve || true
+
+  # --- 10. Clean up Terraform state file ---
+  check "Removing local Terraform state artifacts..."
+  rm -f terraform.tfstate terraform.tfstate.backup .terraform.lock.hcl 2>/dev/null || true
+  rm -rf .terraform 2>/dev/null || true
+
+  echo ""
+  echo -e "${GREEN}Bare project teardown complete.${NC}"
+  echo ""
+  echo "Notes:"
+  echo "  - KMS key versions will be fully destroyed after 24 hours"
+  echo "  - KMS key ring cannot be deleted (GCP limitation) but costs nothing"
+  echo "  - The GCP project is otherwise empty"
+fi
+
 if [[ "${1:-}" != "--teardown" ]] && \
    [[ "${1:-}" != "--restore" ]] && \
    [[ "${1:-}" != "--full-teardown" ]] && \
-   [[ "${1:-}" != "--full-restore" ]]; then
+   [[ "${1:-}" != "--full-restore" ]] && \
+   [[ "${1:-}" != "--stop-services" ]] && \
+   [[ "${1:-}" != "--deep-teardown" ]] && \
+   [[ "${1:-}" != "--bare-project" ]]; then
   echo "Usage:"
   echo "  ./rag-cost-control.sh                  # status check"
   echo "  ./rag-cost-control.sh --teardown       # stop VS + VPC connector (~\$73/mo savings)"
   echo "  ./rag-cost-control.sh --restore        # bring back VS + VPC connector"
   echo "  ./rag-cost-control.sh --full-teardown  # stop everything except data (~\$79/mo savings)"
   echo "  ./rag-cost-control.sh --full-restore   # rebuild entire stack (~45-60 min)"
+  echo "  ./rag-cost-control.sh --stop-services  # delete Cloud Run services (no endpoints)"
+  echo "  ./rag-cost-control.sh --deep-teardown  # destroy all infra, keep index + bucket"
+  echo "  ./rag-cost-control.sh --bare-project   # destroy ALL resources (irreversible)"
 fi

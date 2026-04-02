@@ -73,8 +73,8 @@ The system separates infrastructure, application deployment, and data processing
 | **Security** | IAM least-privilege service accounts (chunker-sa, query-api-sa, cloudbuild-sa), CMEK on Cloud Storage (90-day key rotation), Secret Manager for all credentials, OIDC auth on Pub/Sub push, dedicated Cloud Build SA |
 | **Reliability** | Cloud Run scale-to-zero with max-instances cap, Pub/Sub retry with exponential backoff, deterministic SHA-256 chunk IDs (idempotent re-ingestion), prevent_destroy on Vector Search index |
 | **Performance Efficiency** | Vertex AI Vector Search DEDICATED_RESOURCES (~14ms ANN latency), Firestore parallel chunk retrieval (~10ms), Gemini Flash SSE streaming (first token ~2s), text-embedding-004 batched at 20 chunks/call |
-| **Cost Optimization** | Scale-to-zero Cloud Run, Firestore free tier (50K reads/day), cost control script (4 modes, reduces from ~$77/mo to ~$0.12/mo between sessions), budget alerts at $5/$10/$20, E2_MEDIUM Cloud Build (120 free min/day) |
-| **Operational Excellence** | Structured JSON logging (event, latency_ms, chunk_count, book_title), immutable $COMMIT_SHA image tags, 5-module Terraform with dependency outputs, cost control script with status/teardown/restore/full-restore modes |
+| **Cost Optimization** | Scale-to-zero Cloud Run, Firestore free tier (50K reads/day), cost control script (7 modes, reduces from ~$77/mo to ~$0.12/mo between sessions), budget alerts at $5/$10/$20, E2_MEDIUM Cloud Build (120 free min/day) |
+| **Operational Excellence** | Structured JSON logging (event, latency_ms, chunk_count, book_title), immutable $COMMIT_SHA image tags, 5-module Terraform with dependency outputs, cost control script with 7 teardown/restore modes |
 
 ---
 
@@ -109,13 +109,20 @@ Queries themselves cost ~$0.0004 each (embedding + Gemini Flash at demo volume) 
 ./rag-cost-control.sh --restore          # Bring back serving infrastructure
 ./rag-cost-control.sh --full-teardown    # Stop everything except data (~$79/mo savings, 55-60 min to restore)
 ./rag-cost-control.sh --full-restore     # Rebuild entire stack from scratch
+./rag-cost-control.sh --stop-services    # Delete Cloud Run services (no endpoints accessible)
+./rag-cost-control.sh --deep-teardown    # Destroy all infra, keep VS index + GCS bucket (~$0.12/mo)
+./rag-cost-control.sh --bare-project     # Destroy ALL resources, leave empty GCP project (IRREVERSIBLE)
 ```
 
-**What always persists regardless of teardown mode:**
-- GCS bucket + documents (`force_destroy=false`)
-- Vector Search index + vectors (`prevent_destroy=true`)
-- Firestore chunk text
-- Artifact Registry images (all `$COMMIT_SHA` tags)
+**What persists at each level:**
+
+| Mode | GCS bucket | VS index | Firestore | AR images | Networking | Cloud Run |
+|---|---|---|---|---|---|---|
+| `--teardown` | Yes | Yes | Yes | Yes | Partial | Yes |
+| `--full-teardown` | Yes | Yes | Yes | Yes | No | No |
+| `--stop-services` | Yes | Yes | Yes | Yes | Yes | No |
+| `--deep-teardown` | Yes | Yes | No | No | No | No |
+| `--bare-project` | No | No | No | No | No | No |
 
 ---
 
@@ -155,7 +162,7 @@ enterprise-rag-gcp/
 │   │   └── sse.ts                      # fetch + ReadableStream SSE client
 │   └── package.json
 ├── cloudbuild.yaml                     # CI/CD — E2_MEDIUM, parallel builds, $COMMIT_SHA tags
-├── rag-cost-control.sh                 # Cost management — teardown/restore/status (4 modes)
+├── rag-cost-control.sh                 # Cost management — teardown/restore/status (7 modes)
 ├── CLAUDE.md                           # Claude Code project instructions
 ├── .gitignore
 ├── LICENSE

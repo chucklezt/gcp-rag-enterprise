@@ -303,4 +303,7 @@ cd frontend && npm install && npm run dev
 ./rag-cost-control.sh --restore        # bring back VS endpoint + VPC connector (~30-40 min)
 ./rag-cost-control.sh --full-teardown  # stop everything except data (~$79/mo savings)
 ./rag-cost-control.sh --full-restore   # rebuild entire stack (~45-60 min)
+./rag-cost-control.sh --stop-services  # delete Cloud Run services (no endpoints accessible)
+./rag-cost-control.sh --deep-teardown  # destroy all infra, keep VS index + GCS bucket
+./rag-cost-control.sh --bare-project   # destroy ALL resources, leave empty GCP project (IRREVERSIBLE)
 ```
